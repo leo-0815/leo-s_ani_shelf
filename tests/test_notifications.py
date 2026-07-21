@@ -18,6 +18,7 @@ from app.notifications import (
     milestone_event,
     deliver_notifications,
     deliver_email_notifications,
+    send_test_email,
 )
 
 
@@ -146,6 +147,21 @@ class NotificationTests(unittest.TestCase):
         self.assertNotIn("**", plain)
         self.assertIn("/#notifications", plain)
         self.assertIn("&lt;測試&gt;", html)
+
+    def test_explicit_email_smoke_test_uses_smtp_username_without_delivery_record(self) -> None:
+        sent = []
+        settings = SimpleNamespace(
+            email_configured=True,
+            smtp_username="mailer@example.com",
+        )
+        result = send_test_email(
+            settings=settings,
+            sender=lambda *args: sent.append(args),
+        )
+        self.assertEqual(result["delivered_count"], 1)
+        self.assertEqual(result["recipient_count"], 1)
+        self.assertEqual(sent[0][1], "mailer@example.com")
+        self.assertIn("AniShelf", sent[0][2])
 
 
 if __name__ == "__main__":
