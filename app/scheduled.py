@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 
 from .config import get_settings
-from .crawler import get_job, run_incremental
+from .crawler import get_job, run_incremental_sources
 from .db import ensure_schema
 from .notifications import (
     NotificationError,
@@ -15,11 +15,14 @@ from .notifications import (
 )
 
 
+SCHEDULED_SOURCES = ("tohan", "chingwin", "kadokawa", "tongli", "spp")
+
+
 def main() -> None:
     settings = get_settings()
     ensure_schema()
     started_at = datetime.utcnow() - timedelta(minutes=1)
-    job_id = run_incremental("all")
+    job_id = run_incremental_sources(SCHEDULED_SOURCES)
     job = get_job(job_id) or {"id": job_id, "status": "failed", "message": "找不到更新結果"}
     status_event = crawl_status_event(job)
     email_failure = None
