@@ -20,6 +20,8 @@ class ScheduledWorkflowTests(unittest.TestCase):
         self.assertIn("python -m app.scheduled", self.workflow)
         self.assertIn("secrets.ANISHELF_DB_PASSWORD", self.workflow)
         self.assertIn("secrets.ANISHELF_DISCORD_WEBHOOK_URL", self.workflow)
+        self.assertIn("secrets.ANISHELF_SMTP_PASSWORD", self.workflow)
+        self.assertIn("secrets.ANISHELF_EMAIL_FROM", self.workflow)
 
 
 if __name__ == "__main__":

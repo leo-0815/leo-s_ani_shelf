@@ -25,6 +25,12 @@ class CloudSchemaTests(unittest.TestCase):
         self.assertIn("UNIQUE KEY uq_notification_delivery (channel, event_key)", self.schema)
         self.assertIn("fk_notification_user", self.schema)
 
+    def test_each_user_has_independent_email_preferences(self) -> None:
+        self.assertIn("CREATE TABLE IF NOT EXISTS notification_preferences", self.schema)
+        self.assertIn("email_enabled BOOLEAN NOT NULL DEFAULT FALSE", self.schema)
+        self.assertIn("PRIMARY KEY (user_id)", self.schema)
+        self.assertIn("fk_notification_preferences_user", self.schema)
+
 
 if __name__ == "__main__":
     unittest.main()

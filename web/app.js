@@ -644,6 +644,46 @@ async function enableNotifications() {
   toast("瀏覽器提醒已啟用");
 }
 
+async function loadNotificationPreferences() {
+  const preferences = await api("/api/notification-preferences");
+  $("#notificationEmail").textContent = preferences.email;
+  $("#emailNotificationsEnabled").checked = Boolean(preferences.email_enabled);
+  const selectedDays = new Set((preferences.lead_days || []).map(Number));
+  $$('input[name="leadDays"]').forEach(input => {
+    input.checked = selectedDays.has(Number(input.value));
+  });
+  $("#notifyDateChanges").checked = Boolean(preferences.notify_release_date_changes);
+  $("#notifyFollowedSeries").checked = Boolean(preferences.notify_followed_series);
+}
+
+async function saveNotificationPreferences(event) {
+  event.preventDefault();
+  const emailEnabled = $("#emailNotificationsEnabled").checked;
+  const leadDays = $$('input[name="leadDays"]:checked').map(input => Number(input.value));
+  if (emailEnabled && !leadDays.length) {
+    toast("啟用 Email 通知時，請至少選擇一個提醒日期", true);
+    return;
+  }
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api("/api/notification-preferences", {
+      method: "POST",
+      body: JSON.stringify({
+        email_enabled: emailEnabled,
+        lead_days: leadDays,
+        notify_release_date_changes: $("#notifyDateChanges").checked,
+        notify_followed_series: $("#notifyFollowedSeries").checked,
+      }),
+    });
+    toast(emailEnabled ? "Email 通知設定已儲存" : "Email 通知已關閉");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadQuality() {
   const data = await api("/api/quality");
   $("#qualitySummary").innerHTML = Object.entries(data.counts).map(([key, count]) => `<button class="quality-card" data-quality-filter="${key}">
@@ -730,7 +770,7 @@ function clearFilters(reload = true) {
 }
 
 function switchView(view) {
-  const availableViews = ["library", "wishlist", "series", "upcoming", "recommendations", "quality", "sources"];
+  const availableViews = ["library", "wishlist", "series", "upcoming", "recommendations", "notifications", "quality", "sources"];
   if (!availableViews.includes(view)) view = "library";
   if (!state.user?.is_admin && ["quality", "sources"].includes(view)) view = "library";
   state.view = view;
@@ -743,6 +783,7 @@ function switchView(view) {
     library: ["MY COLLECTION", "Library"], wishlist: ["WISHLIST", "已訂選清單"],
     series: ["SERIES SHELF", "系列書架"], upcoming: ["RELEASE CALENDAR", "近期上市"],
     recommendations: ["FOR YOU", "為你推薦"],
+    notifications: ["NOTIFICATION SETTINGS", "通知設定"],
     quality: ["DATA CHECK", "資料品質"], sources: ["SOURCE HEALTH", "資料來源"],
   };
   $("#pageEyebrow").textContent = titles[view][0];
@@ -753,6 +794,7 @@ function switchView(view) {
   if (view === "series") loadSeries(true).catch(error => toast(error.message, true));
   if (view === "upcoming") loadUpcoming().catch(error => toast(error.message, true));
   if (view === "recommendations") loadRecommendations().catch(error => toast(error.message, true));
+  if (view === "notifications") loadNotificationPreferences().catch(error => toast(error.message, true));
   if (view === "quality") loadQuality().catch(error => toast(error.message, true));
 }
 
@@ -774,6 +816,8 @@ $$(".nav-item").forEach(item => item.addEventListener("click", () => switchView(
 $("#clearFilters").addEventListener("click", () => clearFilters());
 $("#upcomingDays").addEventListener("change", () => loadUpcoming().catch(error => toast(error.message, true)));
 $("#notifyButton").addEventListener("click", () => enableNotifications().catch(error => toast(error.message, true)));
+$("#emailSettingsButton").addEventListener("click", () => switchView("notifications"));
+$("#notificationPreferencesForm").addEventListener("submit", saveNotificationPreferences);
 $("#restoreRecommendations").addEventListener("click", async () => {
   try {
     await api("/api/recommendations/dismissals", {method: "DELETE"});

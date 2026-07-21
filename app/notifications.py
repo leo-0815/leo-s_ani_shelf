@@ -3,20 +3,27 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import smtplib
+import ssl
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
+from html import escape
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from .config import get_settings
+from .config import Settings, get_settings
 from .db import ensure_schema, transaction
 
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 DISCORD_CHANNEL = "discord"
+EMAIL_CHANNEL = "email"
 MAX_DISCORD_CONTENT = 1900
+DEFAULT_LEAD_DAYS = (7, 3, 1, 0)
 
 
 class NotificationError(RuntimeError):
@@ -30,6 +37,8 @@ class NotificationEvent:
     line: str
     user_id: int | None = None
     book_id: int | None = None
+    recipient_email: str = ""
+    recipient_name: str = ""
 
 
 def _as_date(value: Any) -> date | None:
@@ -84,6 +93,8 @@ def milestone_event(row: dict[str, Any], today: date, lead_days: Iterable[int]) 
         event_type="release_milestone",
         user_id=int(row["user_id"]),
         book_id=int(row["book_id"]),
+        recipient_email=str(row.get("email") or ""),
+        recipient_name=str(row.get("display_name") or ""),
         line=f"⏰ **{timing}**｜{_date_label(release_date)}｜{publisher}｜{title}",
     )
 
@@ -97,6 +108,8 @@ def date_change_event(row: dict[str, Any]) -> NotificationEvent:
         event_type="release_date_changed",
         user_id=int(row["user_id"]),
         book_id=int(row["book_id"]),
+        recipient_email=str(row.get("email") or ""),
+        recipient_name=str(row.get("display_name") or ""),
         line=f"🔄 **上市日異動**｜{title}｜{old_date} → {new_date}",
     )
 
@@ -109,6 +122,8 @@ def followed_series_event(row: dict[str, Any]) -> NotificationEvent:
         event_type="followed_series_new_book",
         user_id=int(row["user_id"]),
         book_id=int(row["book_id"]),
+        recipient_email=str(row.get("email") or ""),
+        recipient_name=str(row.get("display_name") or ""),
         line=f"✨ **追蹤系列新刊**｜{_release_label(row)}｜{publisher}｜{title}",
     )
 
@@ -124,6 +139,88 @@ def crawl_status_event(job: dict[str, Any]) -> NotificationEvent | None:
         event_type="crawl_status",
         line=f"⚠️ **{label}**｜工作 #{int(job['id'])}｜{details}",
     )
+
+
+def email_status_event(job_id: int, message: str) -> NotificationEvent:
+    return NotificationEvent(
+        event_key=f"email-delivery:{job_id}:{datetime.utcnow().strftime('%Y%m%d%H')}",
+        event_type="email_delivery_failed",
+        line=f"⚠️ **Email 通知寄送失敗**｜{_short(message, 180)}",
+    )
+
+
+def _parse_lead_days(value: Any) -> tuple[int, ...]:
+    if isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = str(value or "").split(",")
+    parsed = {
+        min(max(int(str(item).strip()), 0), 90)
+        for item in values
+        if str(item).strip().isdigit()
+    }
+    return tuple(sorted(parsed, reverse=True)) or DEFAULT_LEAD_DAYS
+
+
+def get_notification_preferences(user_id: int) -> dict[str, Any]:
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT IGNORE INTO notification_preferences (user_id) VALUES (%s)",
+                (user_id,),
+            )
+            cursor.execute(
+                "SELECT u.email, np.email_enabled, np.lead_days, "
+                "np.notify_release_date_changes, np.notify_followed_series, np.updated_at "
+                "FROM notification_preferences np JOIN users u ON u.id = np.user_id "
+                "WHERE np.user_id = %s",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+    if not row:
+        raise ValueError("找不到通知設定")
+    return {
+        "email": str(row["email"]),
+        "email_enabled": bool(row["email_enabled"]),
+        "lead_days": list(_parse_lead_days(row["lead_days"])),
+        "notify_release_date_changes": bool(row["notify_release_date_changes"]),
+        "notify_followed_series": bool(row["notify_followed_series"]),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def set_notification_preferences(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    lead_days = _parse_lead_days(payload.get("lead_days", DEFAULT_LEAD_DAYS))
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO notification_preferences "
+                "(user_id, email_enabled, lead_days, notify_release_date_changes, "
+                "notify_followed_series) VALUES (%s, %s, %s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE email_enabled = VALUES(email_enabled), "
+                "lead_days = VALUES(lead_days), "
+                "notify_release_date_changes = VALUES(notify_release_date_changes), "
+                "notify_followed_series = VALUES(notify_followed_series)",
+                (
+                    user_id,
+                    bool(payload.get("email_enabled", False)),
+                    ",".join(str(day) for day in lead_days),
+                    bool(payload.get("notify_release_date_changes", True)),
+                    bool(payload.get("notify_followed_series", True)),
+                ),
+            )
+    return get_notification_preferences(user_id)
+
+
+def email_subscriber_count() -> int:
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS count FROM notification_preferences np "
+                "JOIN users u ON u.id = np.user_id "
+                "WHERE np.email_enabled = TRUE AND u.is_active = TRUE"
+            )
+            return int(cursor.fetchone()["count"])
 
 
 def collect_events(
@@ -181,12 +278,81 @@ def collect_events(
                 "SELECT u.id AS user_id, b.id AS book_id, b.title, b.release_date, "
                 "b.release_precision, "
                 "p.name AS publisher_name FROM users u "
+                "JOIN followed_series fs ON fs.user_id = u.id "
+                "JOIN books b ON b.publisher_id = fs.publisher_id "
+                "AND LEFT(LOWER(b.series_title), 190) = fs.normalized_series "
+                "JOIN publishers p ON p.id = b.publisher_id "
+                "WHERE u.role = 'admin' AND u.is_active = TRUE "
+                "AND b.first_seen_at >= %s ORDER BY b.first_seen_at, b.id",
+                (since,),
+            )
+            events.extend(followed_series_event(row) for row in cursor.fetchall())
+    return _unique_events(events)
+
+
+def collect_email_events(
+    since: datetime,
+    *,
+    today: date | None = None,
+) -> list[NotificationEvent]:
+    """Collect opted-in events for every active account.
+
+    Discord deliberately keeps using ``collect_events`` so it remains an
+    administrator-only channel. Email preferences never affect Discord.
+    """
+    today = today or datetime.now(TAIPEI).date()
+    events: list[NotificationEvent] = []
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT u.id AS user_id, u.email, u.display_name, np.lead_days, "
+                "b.id AS book_id, b.title, b.release_date, b.release_precision, "
+                "p.name AS publisher_name FROM notification_preferences np "
+                "JOIN users u ON u.id = np.user_id "
                 "JOIN wishlist_items w ON w.user_id = u.id "
                 "JOIN books b ON b.id = w.book_id "
                 "JOIN publishers p ON p.id = b.publisher_id "
-                "WHERE u.role = 'admin' AND u.is_active = TRUE "
-                "AND w.state IN ('wanted', 'preordered') AND w.follow_series = TRUE "
-                "AND b.first_seen_at >= %s ORDER BY b.first_seen_at, b.id",
+                "WHERE np.email_enabled = TRUE AND u.is_active = TRUE "
+                "AND w.state IN ('wanted', 'preordered') "
+                "AND b.release_precision = 'day' "
+                "AND b.release_date BETWEEN %s AND %s "
+                "ORDER BY u.id, b.release_date, b.title",
+                (today, today + timedelta(days=90)),
+            )
+            for row in cursor.fetchall():
+                event = milestone_event(row, today, _parse_lead_days(row["lead_days"]))
+                if event:
+                    events.append(event)
+
+            cursor.execute(
+                "SELECT u.id AS user_id, u.email, u.display_name, b.id AS book_id, "
+                "b.title, rh.id AS history_id, rh.old_value, rh.new_value "
+                "FROM notification_preferences np "
+                "JOIN users u ON u.id = np.user_id "
+                "JOIN wishlist_items w ON w.user_id = u.id "
+                "JOIN books b ON b.id = w.book_id "
+                "JOIN release_history rh ON rh.book_id = b.id "
+                "WHERE np.email_enabled = TRUE "
+                "AND np.notify_release_date_changes = TRUE AND u.is_active = TRUE "
+                "AND w.state IN ('wanted', 'preordered') "
+                "AND rh.field_name = 'release_date' AND rh.observed_at >= %s "
+                "AND NOT (rh.old_value <=> rh.new_value) ORDER BY u.id, rh.id",
+                (since,),
+            )
+            events.extend(date_change_event(row) for row in cursor.fetchall())
+
+            cursor.execute(
+                "SELECT u.id AS user_id, u.email, u.display_name, b.id AS book_id, "
+                "b.title, b.release_date, b.release_precision, p.name AS publisher_name "
+                "FROM notification_preferences np "
+                "JOIN users u ON u.id = np.user_id "
+                "JOIN followed_series fs ON fs.user_id = u.id "
+                "JOIN books b ON b.publisher_id = fs.publisher_id "
+                "AND LEFT(LOWER(b.series_title), 190) = fs.normalized_series "
+                "JOIN publishers p ON p.id = b.publisher_id "
+                "WHERE np.email_enabled = TRUE "
+                "AND np.notify_followed_series = TRUE AND u.is_active = TRUE "
+                "AND b.first_seen_at >= %s ORDER BY u.id, b.first_seen_at, b.id",
                 (since,),
             )
             events.extend(followed_series_event(row) for row in cursor.fetchall())
@@ -200,7 +366,10 @@ def _unique_events(events: Iterable[NotificationEvent]) -> list[NotificationEven
     return list(unique.values())
 
 
-def undelivered_events(events: Iterable[NotificationEvent]) -> list[NotificationEvent]:
+def undelivered_events(
+    events: Iterable[NotificationEvent],
+    channel: str = DISCORD_CHANNEL,
+) -> list[NotificationEvent]:
     candidates = _unique_events(events)
     if not candidates:
         return []
@@ -213,15 +382,18 @@ def undelivered_events(events: Iterable[NotificationEvent]) -> list[Notification
                 cursor.execute(
                     "SELECT event_key FROM notification_deliveries "
                     f"WHERE channel = %s AND event_key IN ({placeholders})",
-                    [DISCORD_CHANNEL, *keys],
+                    [channel, *keys],
                 )
                 delivered.update(str(row["event_key"]) for row in cursor.fetchall())
     return [event for event in candidates if event.event_key not in delivered]
 
 
-def mark_delivered(events: Iterable[NotificationEvent]) -> None:
+def mark_delivered(
+    events: Iterable[NotificationEvent],
+    channel: str = DISCORD_CHANNEL,
+) -> None:
     rows = [
-        (event.user_id, event.book_id, DISCORD_CHANNEL, event.event_type, event.event_key)
+        (event.user_id, event.book_id, channel, event.event_type, event.event_key)
         for event in events
     ]
     if not rows:
@@ -282,6 +454,82 @@ def post_discord(webhook_url: str, content: str) -> None:
         raise NotificationError(f"Discord webhook connection failed: {exc.reason}") from exc
 
 
+def _plain_line(line: str) -> str:
+    return re.sub(r"\*\*(.*?)\*\*", r"\1", line)
+
+
+def format_email(
+    events: Iterable[NotificationEvent],
+    recipient_name: str = "",
+    public_url: str = "",
+) -> tuple[str, str, str]:
+    items = list(events)
+    subject = f"AniShelf：你追蹤的書有 {len(items)} 則更新"
+    greeting = f"{recipient_name}，你好：" if recipient_name else "你好："
+    plain_lines = [greeting, "", "以下是你在 AniShelf 追蹤書目的最新消息：", ""]
+    plain_lines.extend(f"• {_plain_line(event.line)}" for event in items)
+    if public_url:
+        plain_lines.extend(["", f"管理通知設定：{public_url}/#notifications"])
+    plain_lines.extend(["", "這封信由你在 AniShelf 啟用的通知設定自動寄出。"])
+
+    html_items = "".join(
+        f'<li style="margin:0 0 12px">{escape(_plain_line(event.line))}</li>'
+        for event in items
+    )
+    settings_link = (
+        f'<p style="margin-top:24px"><a href="{escape(public_url)}/#notifications" '
+        'style="color:#c95845">管理或關閉通知</a></p>'
+        if public_url
+        else ""
+    )
+    html_body = (
+        '<div style="font-family:Arial,\'Microsoft JhengHei\',sans-serif;'
+        'max-width:680px;margin:auto;color:#25232a;line-height:1.65">'
+        '<h1 style="font-size:24px;color:#c95845">AniShelf 書籍通知</h1>'
+        f"<p>{escape(greeting)}</p>"
+        "<p>以下是你在 AniShelf 追蹤書目的最新消息：</p>"
+        f'<ul style="padding-left:22px">{html_items}</ul>{settings_link}'
+        '<p style="margin-top:28px;color:#797681;font-size:12px">'
+        "這封信由你在 AniShelf 啟用的通知設定自動寄出。</p></div>"
+    )
+    return subject, "\n".join(plain_lines), html_body
+
+
+def post_email(
+    settings: Settings,
+    recipient: str,
+    subject: str,
+    plain_body: str,
+    html_body: str,
+) -> None:
+    message = EmailMessage()
+    message["From"] = settings.email_from
+    message["To"] = recipient
+    message["Subject"] = subject
+    message.set_content(plain_body)
+    message.add_alternative(html_body, subtype="html")
+    context = ssl.create_default_context()
+    try:
+        if settings.smtp_port == 465 and not settings.smtp_starttls:
+            client: Any = smtplib.SMTP_SSL(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=30,
+                context=context,
+            )
+        else:
+            client = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30)
+        with client:
+            client.ehlo()
+            if settings.smtp_starttls:
+                client.starttls(context=context)
+                client.ehlo()
+            client.login(settings.smtp_username, settings.smtp_password)
+            client.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise NotificationError(f"SMTP email delivery failed: {exc}") from exc
+
+
 def deliver_notifications(
     *,
     webhook_url: str,
@@ -310,6 +558,67 @@ def deliver_notifications(
         "candidate_count": len(events),
         "delivered_count": 0 if dry_run else len(pending),
         "messages": messages if dry_run else [],
+    }
+
+
+def deliver_email_notifications(
+    *,
+    since: datetime,
+    public_url: str = "",
+    today: date | None = None,
+    dry_run: bool = False,
+    settings: Settings | None = None,
+    sender: Callable[[Settings, str, str, str, str], None] = post_email,
+) -> dict[str, Any]:
+    settings = settings or get_settings()
+    if not settings.email_configured and not dry_run:
+        subscriber_count = email_subscriber_count()
+        return {
+            "enabled": False,
+            "candidate_count": 0,
+            "delivered_count": 0,
+            "recipient_count": 0,
+            "subscriber_count": subscriber_count,
+            "configuration_error": (
+                "已有使用者啟用 Email 通知，但寄件 SMTP 尚未設定"
+                if subscriber_count
+                else ""
+            ),
+        }
+    events = collect_email_events(since, today=today)
+    pending = events if dry_run else undelivered_events(events, EMAIL_CHANNEL)
+    grouped: dict[tuple[int, str, str], list[NotificationEvent]] = defaultdict(list)
+    for event in pending:
+        if event.user_id is not None and event.recipient_email:
+            grouped[(event.user_id, event.recipient_email, event.recipient_name)].append(event)
+
+    previews: list[dict[str, Any]] = []
+    delivered_count = 0
+    for (_user_id, recipient, recipient_name), recipient_events in grouped.items():
+        subject, plain_body, html_body = format_email(
+            recipient_events,
+            recipient_name,
+            public_url,
+        )
+        if dry_run:
+            previews.append(
+                {
+                    "recipient": recipient,
+                    "subject": subject,
+                    "body": plain_body,
+                }
+            )
+            continue
+        sender(settings, recipient, subject, plain_body, html_body)
+        mark_delivered(recipient_events, EMAIL_CHANNEL)
+        delivered_count += len(recipient_events)
+    return {
+        "enabled": settings.email_configured,
+        "dry_run": dry_run,
+        "candidate_count": len(events),
+        "delivered_count": delivered_count,
+        "recipient_count": len(grouped),
+        "previews": previews if dry_run else [],
     }
 
 

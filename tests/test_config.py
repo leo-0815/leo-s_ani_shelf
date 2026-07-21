@@ -20,6 +20,7 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(settings.auth_configured)
         self.assertEqual(settings.notification_lead_days, (7, 3, 1, 0))
         self.assertEqual(settings.discord_webhook_url, "")
+        self.assertFalse(settings.email_configured)
 
     def test_render_uses_public_bind_port_and_disables_startup_update(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(
@@ -44,6 +45,11 @@ class ConfigTests(unittest.TestCase):
                 "ANISHELF_ADMIN_EMAILS": "Owner@Example.com, second@example.com ",
                 "ANISHELF_DISCORD_WEBHOOK_URL": "https://discord.example/webhook",
                 "ANISHELF_NOTIFICATION_LEAD_DAYS": "1, 7,3,1,invalid,120",
+                "ANISHELF_SMTP_HOST": "smtp.example.com",
+                "ANISHELF_SMTP_PORT": "587",
+                "ANISHELF_SMTP_USERNAME": "mailer@example.com",
+                "ANISHELF_SMTP_PASSWORD": "app-password",
+                "ANISHELF_EMAIL_FROM": "AniShelf <mailer@example.com>",
             },
             clear=True,
         ):
@@ -53,6 +59,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.admin_emails, ("owner@example.com", "second@example.com"))
         self.assertEqual(settings.discord_webhook_url, "https://discord.example/webhook")
         self.assertEqual(settings.notification_lead_days, (90, 7, 3, 1))
+        self.assertTrue(settings.email_configured)
+        self.assertEqual(settings.smtp_host, "smtp.example.com")
 
     def test_explicit_values_override_cloud_defaults(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(

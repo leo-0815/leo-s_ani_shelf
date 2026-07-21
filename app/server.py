@@ -28,6 +28,7 @@ from .auth import (
 from .config import ROOT, get_settings
 from .crawler import create_job, get_job
 from .db import DatabaseUnavailable, ensure_schema, ping
+from .notifications import get_notification_preferences, set_notification_preferences
 from .repository import (
     clear_recommendation_dismissals,
     delete_wishlist,
@@ -187,6 +188,8 @@ class Handler(BaseHTTPRequestHandler):
             self._export_calendar(user_id, int(query.get("days", ["90"])[0]))
         elif parsed.path == "/api/stats":
             self._json(stats(user_id))
+        elif parsed.path == "/api/notification-preferences":
+            self._json(get_notification_preferences(user_id))
         elif parsed.path == "/api/jobs/latest":
             if self._require_admin(user):
                 self._json(get_job() or {})
@@ -317,6 +320,8 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/recommendations/dismiss":
                 dismiss_recommendation(user_id, int(payload.get("book_id", 0)))
                 self._json({"ok": True})
+            elif parsed.path == "/api/notification-preferences":
+                self._json(set_notification_preferences(user_id, payload))
             elif match := re.fullmatch(r"/api/wishlist/(\d+)", parsed.path):
                 set_wishlist(
                     user_id,

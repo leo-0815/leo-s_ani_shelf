@@ -49,6 +49,12 @@ class Settings:
     session_days: int = 30
     discord_webhook_url: str = ""
     notification_lead_days: tuple[int, ...] = (7, 3, 1, 0)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    email_from: str = ""
+    smtp_starttls: bool = True
 
     @property
     def database_configured(self) -> bool:
@@ -57,6 +63,15 @@ class Settings:
     @property
     def auth_configured(self) -> bool:
         return bool(self.public_url and self.google_client_id and self.google_client_secret)
+
+    @property
+    def email_configured(self) -> bool:
+        return bool(
+            self.smtp_host
+            and self.smtp_username
+            and self.smtp_password
+            and self.email_from
+        )
 
 
 def get_settings() -> Settings:
@@ -100,4 +115,10 @@ def get_settings() -> Settings:
         session_days=max(1, min(int(os.getenv("ANISHELF_SESSION_DAYS", "30")), 90)),
         discord_webhook_url=os.getenv("ANISHELF_DISCORD_WEBHOOK_URL", "").strip(),
         notification_lead_days=lead_days,
+        smtp_host=os.getenv("ANISHELF_SMTP_HOST", "").strip(),
+        smtp_port=int(os.getenv("ANISHELF_SMTP_PORT") or "587"),
+        smtp_username=os.getenv("ANISHELF_SMTP_USERNAME", "").strip(),
+        smtp_password=os.getenv("ANISHELF_SMTP_PASSWORD", "").strip(),
+        email_from=os.getenv("ANISHELF_EMAIL_FROM", "").strip(),
+        smtp_starttls=_env_bool("ANISHELF_SMTP_STARTTLS", True),
     )
