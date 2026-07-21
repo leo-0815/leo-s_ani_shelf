@@ -24,6 +24,23 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[c]);
 const safeUrl = (value = "") => /^https?:\/\//i.test(value) ? escapeHtml(value) : "";
+const TARGET_BOOK_PAGE_SIZE = 100;
+
+function bookGridColumnCount() {
+  const grid = $("#bookGrid");
+  if (!grid) return 1;
+  const template = getComputedStyle(grid).gridTemplateColumns;
+  if (!template || template === "none") return 1;
+  return Math.max(1, template.trim().split(/\s+/).length);
+}
+
+function syncBookPageSize() {
+  const columns = bookGridColumnCount();
+  const nextPageSize = Math.max(columns, Math.floor(TARGET_BOOK_PAGE_SIZE / columns) * columns);
+  if (nextPageSize === state.pageSize) return false;
+  state.pageSize = nextPageSize;
+  return true;
+}
 
 async function api(path, options = {}) {
   const headers = {"Content-Type": "application/json", ...(options.headers || {})};
@@ -164,6 +181,10 @@ function bookParams() {
 
 async function loadBooks(resetPage = false) {
   if (resetPage) state.offset = 0;
+  const pageSizeChanged = syncBookPageSize();
+  if (pageSizeChanged && !resetPage) {
+    state.offset = Math.floor(state.offset / state.pageSize) * state.pageSize;
+  }
   const data = await api(`/api/books?${bookParams()}`);
   state.books = data.items;
   state.totalBooks = data.total;
@@ -242,8 +263,9 @@ async function openDetail(bookId) {
     const cover = safeUrl(book.cover_url);
     const source = safeUrl(book.source_url);
     $("#detailContent").innerHTML = `<div class="detail">
-      <div class="detail-cover">${cover ? `<img src="${cover}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</div>
-      <div class="detail-body">
+      <section class="detail-hero">
+        <div class="detail-cover">${cover ? `<img src="${cover}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</div>
+        <div class="detail-info">
         <p class="eyebrow">${escapeHtml(book.publisher_name)} · ${escapeHtml(typeLabels[book.media_type] || "未分類")}</p>
         <h2>${escapeHtml(book.title)}</h2>
         <p class="detail-sub">${escapeHtml(book.author || "作者未提供")}</p>
@@ -256,6 +278,9 @@ async function openDetail(bookId) {
           <div><small>定價</small><strong>${book.list_price ? `NT$ ${Number(book.list_price).toLocaleString()}` : "未提供"}</strong></div>
           <div><small>首次收錄</small><strong>${escapeHtml((book.first_seen_at || "").replace("T", " ").slice(0, 16))}</strong></div>
         </div>
+        </div>
+      </section>
+      <div class="detail-body">
         <form class="wishlist-form" id="wishlistForm">
           <div class="form-grid">
             <label>訂選狀態<select id="wishlistState">${Object.entries(wishlistLabels).map(([key, value]) => `<option value="${key}" ${book.wishlist_state === key ? "selected" : ""}>${value}</option>`).join("")}</select></label>
@@ -795,6 +820,17 @@ document.addEventListener("keydown", event => {
     event.preventDefault();
     $("#searchInput").focus();
   }
+});
+
+let libraryResizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(libraryResizeTimer);
+  libraryResizeTimer = setTimeout(() => {
+    if (state.view !== "library" && state.view !== "wishlist") return;
+    if (!syncBookPageSize()) return;
+    state.offset = 0;
+    loadBooks().catch(error => toast(error.message, true));
+  }, 180);
 });
 
 const initialView = location.hash.slice(1);

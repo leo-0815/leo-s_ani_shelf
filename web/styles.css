@@ -163,18 +163,42 @@ dialog::backdrop { background: rgba(32,29,34,.56); backdrop-filter: blur(3px); }
 .prompt-content > p:not(.eyebrow) { color: var(--muted); font-size: 13px; line-height: 1.65; }
 .prompt-content .form-actions { justify-content: center; margin-top: 22px; }
 .prompt-icon { width: 48px; height: 48px; margin: 0 auto 16px; display: grid; place-items: center; border-radius: 15px; color: #fff; background: var(--violet); font-size: 22px; }
-.detail { display: grid; grid-template-columns: 235px 1fr; }
-.detail-cover { min-height: 355px; background: linear-gradient(145deg, #decfc0, #a89e99); }
-.detail-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.detail-body { padding: 42px 38px 35px; }
-.detail-body h2 { margin-bottom: 10px; font-family: Georgia, "Noto Serif TC", serif; font-size: 26px; font-weight: 500; line-height: 1.35; }
+.detail { overflow: hidden; }
+.detail-hero {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 30px;
+  padding: 30px 38px;
+  background: linear-gradient(135deg, #f5eee8 0%, #fffdf9 58%);
+}
+.detail-cover {
+  width: 100%;
+  min-height: 0;
+  aspect-ratio: 3 / 4.25;
+  align-self: start;
+  overflow: hidden;
+  border: 1px solid rgba(105, 88, 75, .1);
+  border-radius: 12px;
+  background: #eee7e0;
+  box-shadow: 0 14px 32px rgba(68, 52, 42, .14);
+}
+.detail-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center top;
+  display: block;
+}
+.detail-info { min-width: 0; padding-top: 8px; }
+.detail-info h2 { margin-bottom: 10px; font-family: Georgia, "Noto Serif TC", serif; font-size: 26px; font-weight: 500; line-height: 1.35; }
+.detail-body { padding: 28px 38px 35px; border-top: 1px solid var(--line); }
 .detail-sub { color: var(--muted); font-size: 13px; }
 .detail-grid { margin: 25px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .detail-grid div { padding: 12px; border-radius: 9px; background: #f7f3ee; }
 .detail-grid small, .detail-grid strong { display: block; }
 .detail-grid small { margin-bottom: 4px; color: var(--muted); font-size: 10px; }
 .detail-grid strong { font-size: 13px; }
-.wishlist-form { padding-top: 20px; border-top: 1px solid var(--line); }
+.wishlist-form { padding-top: 0; }
 .wishlist-form label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
 .wishlist-form textarea { width: 100%; min-height: 72px; resize: vertical; margin: 6px 0 10px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
@@ -187,7 +211,7 @@ dialog::backdrop { background: rgba(32,29,34,.56); backdrop-filter: blur(3px); }
 .danger { color: #b54f48; }
 .source-link { display: inline-block; margin-top: 14px; color: var(--coral-dark); font-size: 12px; font-weight: 700; text-decoration: none; }
 .series-link { max-width: 100%; padding: 0; border: 0; color: var(--coral-dark); background: transparent; font-size: 12px; font-weight: 700; text-align: left; }
-.detail-related { grid-column: 1 / -1; padding: 25px 30px 31px; border-top: 1px solid var(--line); background: #faf7f3; }
+.detail-related { padding: 25px 30px 31px; border-top: 1px solid var(--line); background: #faf7f3; }
 .detail-related-heading { display: flex; align-items: end; justify-content: space-between; gap: 15px; margin-bottom: 15px; }
 .detail-related-heading h3 { margin: 0; font-family: Georgia, "Noto Serif TC", serif; font-size: 20px; font-weight: 500; }
 .detail-related-heading small { color: var(--muted); font-size: 10px; }
@@ -280,8 +304,9 @@ dialog::backdrop { background: rgba(32,29,34,.56); backdrop-filter: blur(3px); }
   .stat-icon { width: 34px; height: 34px; }
   .book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 16px; gap: 22px 13px; }
   .toolbar { align-items: flex-start; flex-direction: column; }
-  .detail { display: block; }
-  .detail-cover { height: 260px; min-height: 0; }
+  .detail-hero { display: block; padding: 24px 22px 26px; }
+  .detail-cover { width: min(220px, 100%); margin: 0 auto; aspect-ratio: 3 / 4.25; }
+  .detail-info { padding-top: 24px; }
   .detail-body { padding: 28px 22px; }
   .detail-related { padding: 22px; }
   .detail-related-heading { align-items: flex-start; flex-direction: column; }
