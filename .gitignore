@@ -1,5 +1,7 @@
 .env
 .anishelf.lock
+.anishelf.*.lock
+.cloud-worktree/
 __pycache__/
 *.py[cod]
 .pytest_cache/

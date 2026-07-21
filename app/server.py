@@ -38,9 +38,15 @@ WEB_ROOT = ROOT / "web"
 _INSTANCE_LOCK: Any = None
 
 
-def _acquire_instance_lock() -> bool:
+def _instance_lock_path(port: int) -> Path:
+    return ROOT / f".anishelf.{port}.lock"
+
+
+def _acquire_instance_lock(port: int) -> bool:
     global _INSTANCE_LOCK
-    path = ROOT / ".anishelf.lock"
+    # Local, staging and production can share a checkout during diagnostics.
+    # A per-port lock prevents one environment from blocking another.
+    path = _instance_lock_path(port)
     handle = path.open("a+b")
     handle.seek(0)
     if handle.tell() == 0:
@@ -364,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     settings = get_settings()
-    if not _acquire_instance_lock():
+    if not _acquire_instance_lock(settings.port):
         print(f"AniShelf 已在執行：http://{settings.host}:{settings.port}")
         return
     schema_ready = False
