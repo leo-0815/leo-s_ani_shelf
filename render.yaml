@@ -27,3 +27,11 @@ services:
         sync: false
       - key: ANISHELF_DB_PASSWORD
         sync: false
+      - key: ANISHELF_PUBLIC_URL
+        sync: false
+      - key: ANISHELF_GOOGLE_CLIENT_ID
+        sync: false
+      - key: ANISHELF_GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: ANISHELF_ADMIN_EMAILS
+        sync: false

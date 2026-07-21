@@ -42,10 +42,19 @@ class Settings:
     port: int
     cloud_mode: bool
     auto_update: bool
+    public_url: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    admin_emails: tuple[str, ...] = ()
+    session_days: int = 30
 
     @property
     def database_configured(self) -> bool:
         return bool(self.db_password and self.db_password != "replace-me")
+
+    @property
+    def auth_configured(self) -> bool:
+        return bool(self.public_url and self.google_client_id and self.google_client_secret)
 
 
 def get_settings() -> Settings:
@@ -53,6 +62,14 @@ def get_settings() -> Settings:
     cloud_mode = _env_bool("ANISHELF_CLOUD_MODE", bool(os.getenv("RENDER")))
     default_host = "0.0.0.0" if cloud_mode else "127.0.0.1"
     port_value = os.getenv("PORT") or os.getenv("ANISHELF_PORT", "8765")
+    public_url = os.getenv("ANISHELF_PUBLIC_URL", "").strip().rstrip("/")
+    if not public_url and not cloud_mode:
+        public_url = f"http://127.0.0.1:{port_value}"
+    admin_emails = tuple(
+        email.strip().casefold()
+        for email in os.getenv("ANISHELF_ADMIN_EMAILS", "").split(",")
+        if email.strip()
+    )
     return Settings(
         db_host=os.getenv("ANISHELF_DB_HOST", "127.0.0.1"),
         db_port=int(os.getenv("ANISHELF_DB_PORT", "3306")),
@@ -64,4 +81,9 @@ def get_settings() -> Settings:
         port=int(port_value),
         cloud_mode=cloud_mode,
         auto_update=_env_bool("ANISHELF_AUTO_UPDATE", not cloud_mode),
+        public_url=public_url,
+        google_client_id=os.getenv("ANISHELF_GOOGLE_CLIENT_ID", "").strip(),
+        google_client_secret=os.getenv("ANISHELF_GOOGLE_CLIENT_SECRET", "").strip(),
+        admin_emails=admin_emails,
+        session_days=max(1, min(int(os.getenv("ANISHELF_SESSION_DAYS", "30")), 90)),
     )

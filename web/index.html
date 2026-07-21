@@ -8,6 +8,16 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <section class="login-gate" id="loginGate">
+      <div class="login-card">
+        <span class="login-mark">A</span>
+        <p class="eyebrow">ANISHELF CLOUD</p>
+        <h1>登入你的收藏書架</h1>
+        <p>使用 Google 帳號登入；AniShelf 不會取得或保存你的 Google 密碼。</p>
+        <a class="google-login" id="googleLogin" href="/auth/google">使用 Google 登入</a>
+        <small class="hidden" id="loginUnavailable">站長尚未完成 Google 登入設定。</small>
+      </div>
+    </section>
     <div class="shell">
       <aside class="sidebar">
         <a class="brand" href="#library" aria-label="AniShelf 首頁">
@@ -47,6 +57,11 @@
               <kbd>Ctrl K</kbd>
             </label>
             <button class="primary" id="updateButton"><span>↻</span>更新資料</button>
+          </div>
+          <div class="account-menu hidden" id="accountMenu">
+            <img id="accountAvatar" alt="" />
+            <span><strong id="accountName"></strong><small id="accountRole"></small></span>
+            <button class="text-button" id="logoutButton">登出</button>
           </div>
         </header>
 

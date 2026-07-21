@@ -9,7 +9,7 @@ from .models import BookRecord
 from .repository import set_wishlist, upsert_book
 
 
-def restore_export(path: Path) -> dict[str, int]:
+def restore_export(path: Path, user_id: int | None = None) -> dict[str, int]:
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
     items = payload.get("items")
     if not isinstance(items, list):
@@ -22,8 +22,9 @@ def restore_export(path: Path) -> dict[str, int]:
             totals["processed"] += 1
             if outcome in totals:
                 totals[outcome] += 1
-            if item.get("wishlist_state"):
+            if user_id is not None and item.get("wishlist_state"):
                 set_wishlist(
+                    user_id,
                     _book_id(record.publisher_code, record.source_key),
                     str(item["wishlist_state"]),
                     str(item.get("wishlist_notes") or ""),

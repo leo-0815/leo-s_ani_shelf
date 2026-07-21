@@ -43,7 +43,48 @@ CREATE TABLE IF NOT EXISTS books (
     CONSTRAINT fk_books_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS users (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    provider VARCHAR(30) NOT NULL,
+    provider_subject VARCHAR(190) NOT NULL,
+    email VARCHAR(320) NOT NULL,
+    display_name VARCHAR(200) NOT NULL,
+    avatar_url VARCHAR(1000) NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'user',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_login_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_users_provider_subject (provider, provider_subject),
+    UNIQUE KEY uq_users_email (email),
+    KEY idx_users_role (role)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    token_hash CHAR(64) NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    csrf_token CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (token_hash),
+    KEY idx_sessions_user (user_id),
+    KEY idx_sessions_expiry (expires_at),
+    CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS oauth_login_states (
+    state_hash CHAR(64) NOT NULL,
+    nonce VARCHAR(100) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (state_hash),
+    KEY idx_oauth_states_expiry (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS wishlist_items (
+    user_id BIGINT UNSIGNED NOT NULL,
     book_id BIGINT UNSIGNED NOT NULL,
     state VARCHAR(30) NOT NULL DEFAULT 'wanted',
     notes TEXT NULL,
@@ -55,26 +96,34 @@ CREATE TABLE IF NOT EXISTS wishlist_items (
     owned_format VARCHAR(20) NOT NULL DEFAULT 'paper',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (book_id),
-    KEY idx_wishlist_state (state),
+    PRIMARY KEY (user_id, book_id),
+    KEY idx_wishlist_state (user_id, state),
+    KEY idx_wishlist_book (book_id),
+    CONSTRAINT fk_wishlist_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_wishlist_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS followed_series (
+    user_id BIGINT UNSIGNED NOT NULL,
     publisher_id BIGINT UNSIGNED NOT NULL,
     series_title VARCHAR(500) NOT NULL,
     normalized_series VARCHAR(190) NOT NULL,
     media_type VARCHAR(40) NOT NULL DEFAULT 'unknown',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (publisher_id, normalized_series),
+    PRIMARY KEY (user_id, publisher_id, normalized_series),
+    CONSTRAINT fk_followed_series_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_followed_series_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS recommendation_dismissals (
+    user_id BIGINT UNSIGNED NOT NULL,
     book_id BIGINT UNSIGNED NOT NULL,
     reason_type VARCHAR(40) NOT NULL DEFAULT 'all',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (book_id),
+    PRIMARY KEY (user_id, book_id),
+    KEY idx_recommendation_dismissal_book (book_id),
+    CONSTRAINT fk_recommendation_dismissal_user
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_recommendation_dismissal_book
         FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
