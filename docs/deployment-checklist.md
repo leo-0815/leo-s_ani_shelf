@@ -19,12 +19,19 @@
 - `ANISHELF_DB_USER`
 - `ANISHELF_DB_PASSWORD`
 - `ANISHELF_DISCORD_WEBHOOK_URL`
+- `ANISHELF_SMTP_HOST`
+- `ANISHELF_SMTP_PORT`
+- `ANISHELF_SMTP_USERNAME`
+- `ANISHELF_SMTP_PASSWORD`
+- `ANISHELF_EMAIL_FROM`
 
 排程每天台北時間 08:15 執行增量更新，並只將管理員帳號的訂選與追蹤內容送到 Discord。
+每位使用者可自行啟用 Email；排程會使用同一組 SMTP 寄件帳號，把個人通知寄到其
+Google 登入信箱。Email 預設關閉，帳號之間不共用偏好或追蹤資料。
 由於 GitHub 的定時 workflow 只從預設分支執行，合併後需將 Repository default branch 設為
 `cloud/deployment`；本機版 `main` 分支仍會保留，不會被刪除或合併。
 
-密碼、資料庫連線密碼、OAuth Client Secret 與 Discord Webhook URL 僅能存入
+密碼、資料庫連線密碼、OAuth Client Secret、SMTP 密碼與 Discord Webhook URL 僅能存入
 GitHub Secrets 或 Render Environment，不得提交至 Repository 或貼入工作紀錄。
 
 ## 人工審核斷點

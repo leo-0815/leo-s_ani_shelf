@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import unittest
 from datetime import date, datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.notifications import (
     MAX_DISCORD_CONTENT,
+    EMAIL_CHANNEL,
     NotificationEvent,
     crawl_status_event,
     date_change_event,
     event_batches,
+    format_email,
     format_batch,
     followed_series_event,
     milestone_event,
     deliver_notifications,
+    deliver_email_notifications,
 )
 
 
@@ -104,6 +108,44 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(result["delivered_count"], 1)
         self.assertEqual(len(sent), 1)
         mark_delivered.assert_called_once_with([event])
+
+    def test_email_digest_is_grouped_per_user_and_recorded_separately(self) -> None:
+        event = NotificationEvent(
+            "release:7:12:2026-07-29:7",
+            "release_milestone",
+            "⏰ **7 天後上市**｜測試新刊",
+            7,
+            12,
+            "reader@example.com",
+            "讀者",
+        )
+        sent = []
+        settings = SimpleNamespace(email_configured=True)
+        with patch("app.notifications.collect_email_events", return_value=[event]), patch(
+            "app.notifications.undelivered_events", return_value=[event]
+        ), patch("app.notifications.mark_delivered") as mark_delivered:
+            result = deliver_email_notifications(
+                since=datetime(2026, 7, 22),
+                public_url="https://anishelf.example.com",
+                settings=settings,
+                sender=lambda *args: sent.append(args),
+            )
+        self.assertEqual(result["recipient_count"], 1)
+        self.assertEqual(result["delivered_count"], 1)
+        self.assertEqual(sent[0][1], "reader@example.com")
+        mark_delivered.assert_called_once_with([event], EMAIL_CHANNEL)
+
+    def test_email_body_contains_settings_link_without_discord_markdown(self) -> None:
+        event = NotificationEvent("event:1", "test", "🔄 **上市日異動**｜<測試>")
+        subject, plain, html = format_email(
+            [event],
+            "讀者",
+            "https://anishelf.example.com",
+        )
+        self.assertIn("1 則更新", subject)
+        self.assertNotIn("**", plain)
+        self.assertIn("/#notifications", plain)
+        self.assertIn("&lt;測試&gt;", html)
 
 
 if __name__ == "__main__":

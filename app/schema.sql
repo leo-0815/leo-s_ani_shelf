@@ -194,6 +194,20 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     CONSTRAINT fk_notification_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    user_id BIGINT UNSIGNED NOT NULL,
+    email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    lead_days VARCHAR(100) NOT NULL DEFAULT '7,3,1,0',
+    notify_release_date_changes BOOLEAN NOT NULL DEFAULT TRUE,
+    notify_followed_series BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id),
+    KEY idx_notification_preferences_email (email_enabled, user_id),
+    CONSTRAINT fk_notification_preferences_user
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 INSERT IGNORE INTO publishers (code, name, homepage_url, enabled)
 VALUES
     ('tohan', '台灣東販', 'https://www.tohan.com.tw/', TRUE),

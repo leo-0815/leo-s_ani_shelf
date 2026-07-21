@@ -13,6 +13,8 @@ HTML/CSS/JavaScript，避免 Node、Redis、Docker、瀏覽器引擎及圖片下
 - 為你推薦：依已購入書目與已追蹤系列推薦作品，可忽略項目，購入後也會詢問是否追蹤系列
 - 書籍詳細頁：底部顯示「你可能會喜歡」，可直接查看或加入想買
 - 近期上市時間軸、瀏覽器通知與 `.ics` 日曆匯出
+- 每位帳號獨立的 Email 上市提醒、日期異動與追蹤系列新刊通知
+- 管理員專用 Discord 排程摘要與爬蟲／Email 寄送異常提醒
 - 資料品質頁：缺作者、ISBN、日期、類型與可疑舊日期
 - 完整 JSON 備份、CSV 書庫／訂選匯出
 - 書籍詳細資料與出版社原始連結
@@ -94,6 +96,9 @@ Render Blueprint 建立時需由管理者直接填入下列秘密值，請勿寫
 - `ANISHELF_DB_NAME`
 - `ANISHELF_DB_USER`
 - `ANISHELF_DB_PASSWORD`
+
+每日更新與通知由 GitHub Actions 執行。Discord webhook 與 SMTP 寄件設定只放在
+Repository Actions Secrets；完整欄位與驗收流程請參考 `docs/notifications-setup.md`。
 
 `.github/workflows/ci.yml` 會在 push 與 Pull Request 上使用 Python 3.10、3.12 執行
 完整測試。部署建議保持 `checksPass`，只有 CI 通過才更新正式服務。

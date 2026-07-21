@@ -30,6 +30,7 @@
           <button class="nav-item" data-view="upcoming"><span>◷</span>近期上市</button>
           <button class="nav-item" data-view="wishlist"><span>♡</span>已訂選</button>
           <button class="nav-item" data-view="recommendations"><span>✦</span>為你推薦</button>
+          <button class="nav-item" data-view="notifications"><span>✉</span>通知設定</button>
           <button class="nav-item" data-view="quality"><span>◇</span>資料品質</button>
           <button class="nav-item" data-view="sources"><span>↻</span>資料來源</button>
         </nav>
@@ -126,6 +127,7 @@
             <div class="heading-actions">
               <select id="upcomingDays" aria-label="日期範圍"><option value="7">未來 7 天</option><option value="31" selected>未來 31 天</option><option value="90">未來 90 天</option></select>
               <a class="secondary button-link" href="/api/calendar.ics?days=90">匯出日曆</a>
+              <button class="secondary" id="emailSettingsButton">Email 通知設定</button>
               <button class="secondary" id="notifyButton">啟用瀏覽器提醒</button>
             </div>
           </div>
@@ -150,6 +152,50 @@
             <h2>還沒有可用的推薦</h2>
             <p id="recommendationEmptyText">先將收藏中的書標記為「已購入」，系統就會開始整理同系列與同作者作品。</p>
           </div>
+        </section>
+
+        <section class="content-card view-section hidden" id="notificationsView">
+          <div class="section-heading">
+            <div><p class="eyebrow">NOTIFICATION SETTINGS</p><h2>通知設定</h2></div>
+            <p>每個帳號各自設定；Discord 系統通知仍只有管理員會收到。</p>
+          </div>
+          <form class="notification-settings" id="notificationPreferencesForm">
+            <div class="notification-primary">
+              <div>
+                <strong>Email 上市通知</strong>
+                <p>每日排程會把同一天的消息整理成一封信，不會要求 Gmail 信件權限。</p>
+              </div>
+              <label class="toggle-control">
+                <input id="emailNotificationsEnabled" type="checkbox" />
+                <span>啟用</span>
+              </label>
+            </div>
+            <div class="notification-email">
+              <small>通知收件地址</small>
+              <strong id="notificationEmail">讀取中…</strong>
+              <p>收件地址來自已驗證的 Google 登入帳號，目前不能另行更換。</p>
+            </div>
+            <fieldset>
+              <legend>上市前多久提醒</legend>
+              <div class="choice-grid">
+                <label><input type="checkbox" name="leadDays" value="7" /> 7 天前</label>
+                <label><input type="checkbox" name="leadDays" value="3" /> 3 天前</label>
+                <label><input type="checkbox" name="leadDays" value="1" /> 1 天前</label>
+                <label><input type="checkbox" name="leadDays" value="0" /> 上市當天</label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>其他追蹤消息</legend>
+              <div class="notification-options">
+                <label><input id="notifyDateChanges" type="checkbox" /> 已訂選商品的上市日期有異動</label>
+                <label><input id="notifyFollowedSeries" type="checkbox" /> 已追蹤系列收錄新書</label>
+              </div>
+            </fieldset>
+            <div class="notification-note">
+              通知預設關閉。啟用後只寄送你的追蹤內容；可隨時回到此頁關閉。
+            </div>
+            <button class="primary" type="submit">儲存通知設定</button>
+          </form>
         </section>
 
         <section class="content-card view-section hidden" id="qualityView">
