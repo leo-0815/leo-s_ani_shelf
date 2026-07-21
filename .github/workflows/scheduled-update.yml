@@ -1,0 +1,49 @@
+name: Scheduled catalog update
+
+on:
+  schedule:
+    # 08:15 Asia/Taipei (GitHub cron uses UTC).
+    - cron: "15 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anishelf-scheduled-update
+  cancel-in-progress: false
+
+jobs:
+  update-and-notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ANISHELF_CLOUD_MODE: "true"
+      ANISHELF_AUTO_UPDATE: "false"
+      ANISHELF_DB_SSL_MODE: verify_identity
+      ANISHELF_DB_HOST: ${{ secrets.ANISHELF_DB_HOST }}
+      ANISHELF_DB_PORT: ${{ secrets.ANISHELF_DB_PORT }}
+      ANISHELF_DB_NAME: ${{ secrets.ANISHELF_DB_NAME }}
+      ANISHELF_DB_USER: ${{ secrets.ANISHELF_DB_USER }}
+      ANISHELF_DB_PASSWORD: ${{ secrets.ANISHELF_DB_PASSWORD }}
+      ANISHELF_DISCORD_WEBHOOK_URL: ${{ secrets.ANISHELF_DISCORD_WEBHOOK_URL }}
+      ANISHELF_NOTIFICATION_LEAD_DAYS: "7,3,1,0"
+      ANISHELF_PUBLIC_URL: https://anishelf-wmcu.onrender.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Validate database secrets
+        shell: bash
+        run: |
+          for name in ANISHELF_DB_HOST ANISHELF_DB_PORT ANISHELF_DB_NAME ANISHELF_DB_USER ANISHELF_DB_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+      - name: Update publishers and send notifications
+        run: python -m app.scheduled

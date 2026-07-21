@@ -178,6 +178,22 @@ CREATE TABLE IF NOT EXISTS source_backfill_progress (
     PRIMARY KEY (source_code, segment)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NULL,
+    book_id BIGINT UNSIGNED NULL,
+    channel VARCHAR(30) NOT NULL,
+    event_type VARCHAR(40) NOT NULL,
+    event_key VARCHAR(255) NOT NULL,
+    delivered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_notification_delivery (channel, event_key),
+    KEY idx_notification_user (user_id, delivered_at),
+    KEY idx_notification_book (book_id, delivered_at),
+    CONSTRAINT fk_notification_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_notification_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 INSERT IGNORE INTO publishers (code, name, homepage_url, enabled)
 VALUES
     ('tohan', '台灣東販', 'https://www.tohan.com.tw/', TRUE),

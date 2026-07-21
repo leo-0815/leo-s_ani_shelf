@@ -18,6 +18,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.db_ssl_mode, "preferred")
         self.assertEqual(settings.public_url, "http://127.0.0.1:8765")
         self.assertFalse(settings.auth_configured)
+        self.assertEqual(settings.notification_lead_days, (7, 3, 1, 0))
+        self.assertEqual(settings.discord_webhook_url, "")
 
     def test_render_uses_public_bind_port_and_disables_startup_update(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(
@@ -40,6 +42,8 @@ class ConfigTests(unittest.TestCase):
                 "ANISHELF_GOOGLE_CLIENT_ID": "client-id",
                 "ANISHELF_GOOGLE_CLIENT_SECRET": "client-secret",
                 "ANISHELF_ADMIN_EMAILS": "Owner@Example.com, second@example.com ",
+                "ANISHELF_DISCORD_WEBHOOK_URL": "https://discord.example/webhook",
+                "ANISHELF_NOTIFICATION_LEAD_DAYS": "1, 7,3,1,invalid,120",
             },
             clear=True,
         ):
@@ -47,6 +51,8 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.auth_configured)
         self.assertEqual(settings.public_url, "https://shelf.example.com")
         self.assertEqual(settings.admin_emails, ("owner@example.com", "second@example.com"))
+        self.assertEqual(settings.discord_webhook_url, "https://discord.example/webhook")
+        self.assertEqual(settings.notification_lead_days, (90, 7, 3, 1))
 
     def test_explicit_values_override_cloud_defaults(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(

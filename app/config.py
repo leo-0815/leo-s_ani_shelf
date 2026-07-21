@@ -47,6 +47,8 @@ class Settings:
     google_client_secret: str = ""
     admin_emails: tuple[str, ...] = ()
     session_days: int = 30
+    discord_webhook_url: str = ""
+    notification_lead_days: tuple[int, ...] = (7, 3, 1, 0)
 
     @property
     def database_configured(self) -> bool:
@@ -70,6 +72,16 @@ def get_settings() -> Settings:
         for email in os.getenv("ANISHELF_ADMIN_EMAILS", "").split(",")
         if email.strip()
     )
+    lead_days = tuple(
+        sorted(
+            {
+                min(max(int(value.strip()), 0), 90)
+                for value in os.getenv("ANISHELF_NOTIFICATION_LEAD_DAYS", "7,3,1,0").split(",")
+                if value.strip().isdigit()
+            },
+            reverse=True,
+        )
+    ) or (7, 3, 1, 0)
     return Settings(
         db_host=os.getenv("ANISHELF_DB_HOST", "127.0.0.1"),
         db_port=int(os.getenv("ANISHELF_DB_PORT", "3306")),
@@ -86,4 +98,6 @@ def get_settings() -> Settings:
         google_client_secret=os.getenv("ANISHELF_GOOGLE_CLIENT_SECRET", "").strip(),
         admin_emails=admin_emails,
         session_days=max(1, min(int(os.getenv("ANISHELF_SESSION_DAYS", "30")), 90)),
+        discord_webhook_url=os.getenv("ANISHELF_DISCORD_WEBHOOK_URL", "").strip(),
+        notification_lead_days=lead_days,
     )
