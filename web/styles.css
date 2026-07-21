@@ -19,6 +19,21 @@ button, input, select, textarea { font: inherit; }
 button, select { cursor: pointer; }
 .hidden { display: none !important; }
 
+.login-gate { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at top, #fff8ef, #eee8e2 65%); }
+.login-card { width: min(440px, 100%); padding: 48px; border: 1px solid var(--line); border-radius: 20px; background: var(--paper); box-shadow: 0 28px 80px rgba(50, 42, 36, .16); text-align: center; }
+.login-mark { width: 58px; height: 58px; margin: 0 auto 24px; display: grid; place-items: center; border-radius: 17px; color: #fff; background: var(--coral); font: 34px Georgia, serif; }
+.login-card h1 { margin-bottom: 14px; font-size: 32px; }
+.login-card > p:not(.eyebrow) { margin-bottom: 28px; color: var(--muted); line-height: 1.7; }
+.login-card small { display: block; color: var(--coral-dark); }
+.google-login { display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 0 22px; border: 1px solid #d8d3cd; border-radius: 11px; color: var(--ink); background: #fff; text-decoration: none; font-weight: 700; box-shadow: 0 7px 20px rgba(50, 42, 36, .08); }
+.google-login:hover { border-color: var(--coral); }
+.account-menu { display: flex; align-items: center; gap: 9px; margin-left: auto; padding: 6px 8px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+.account-menu img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.account-menu strong, .account-menu small { display: block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu strong { font-size: 11px; }
+.account-menu small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.account-menu .text-button { padding: 6px; }
+
 .shell { min-height: 100vh; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 .sidebar { position: sticky; top: 0; height: 100vh; padding: 34px 20px 24px; background: #26232a; color: #fff; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 12px; color: #fff; text-decoration: none; padding: 0 8px 38px; }

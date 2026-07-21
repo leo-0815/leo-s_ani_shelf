@@ -79,7 +79,7 @@ def main() -> None:
                 size = cursor.fetchone()
                 cursor.execute("SELECT * FROM crawl_jobs ORDER BY id DESC LIMIT 1")
                 latest_job = cursor.fetchone()
-        print(json.dumps({"stats": stats(), "publishers": publishers, "sync": sync, "latest_job": latest_job, **size}, default=str, ensure_ascii=False, indent=2))
+        print(json.dumps({"stats": stats(0), "publishers": publishers, "sync": sync, "latest_job": latest_job, **size}, default=str, ensure_ascii=False, indent=2))
     elif command == "migrate":
         from app.db import ensure_schema
 
@@ -114,7 +114,7 @@ def main() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             json.dumps(
-                export_catalog(),
+                export_catalog(0),
                 default=str,
                 ensure_ascii=False,
                 indent=2,

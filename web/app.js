@@ -1,4 +1,6 @@
 const state = {
+  user: null,
+  csrfToken: "",
   view: "library",
   books: [],
   series: [],
@@ -24,10 +26,55 @@ const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, c => ({"&":
 const safeUrl = (value = "") => /^https?:\/\//i.test(value) ? escapeHtml(value) : "";
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {"Content-Type": "application/json"}, ...options});
+  const headers = {"Content-Type": "application/json", ...(options.headers || {})};
+  if (state.csrfToken && options.method && options.method !== "GET") {
+    headers["X-CSRF-Token"] = state.csrfToken;
+  }
+  const response = await fetch(path, {...options, headers});
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && path !== "/api/auth/me") showLogin();
   if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
   return data;
+}
+
+function showLogin() {
+  state.user = null;
+  state.csrfToken = "";
+  $("#loginGate").classList.remove("hidden");
+}
+
+function applyRoleUi() {
+  const isAdmin = Boolean(state.user?.is_admin);
+  const qualityNav = document.querySelector('[data-view="quality"]');
+  if (qualityNav) qualityNav.classList.toggle("hidden", !isAdmin);
+  const sourcesNav = document.querySelector('[data-view="sources"]');
+  if (sourcesNav) sourcesNav.classList.toggle("hidden", !isAdmin);
+  $("#updateButton").classList.toggle("hidden", !isAdmin);
+  document.querySelectorAll('a[href="/api/export.json"], a[href="/api/export.csv"]').forEach(node => {
+    node.classList.toggle("hidden", !isAdmin);
+  });
+  $("#accountMenu").classList.remove("hidden");
+  $("#accountName").textContent = state.user.display_name || state.user.email;
+  $("#accountRole").textContent = isAdmin ? "管理員" : "一般帳號";
+  const avatar = $("#accountAvatar");
+  avatar.src = state.user.avatar_url || "";
+  avatar.classList.toggle("hidden", !state.user.avatar_url);
+}
+
+async function loadSession() {
+  const session = await api("/api/auth/me");
+  if (!session.authenticated) {
+    const config = await api("/api/auth/config");
+    $("#googleLogin").classList.toggle("hidden", !config.google_enabled);
+    $("#loginUnavailable").classList.toggle("hidden", config.google_enabled);
+    showLogin();
+    return false;
+  }
+  state.user = session.user;
+  state.csrfToken = session.user.csrf_token;
+  $("#loginGate").classList.add("hidden");
+  applyRoleUi();
+  return true;
 }
 
 function toast(message, error = false) {
@@ -70,9 +117,11 @@ async function checkHealth() {
 }
 
 async function loadAll() {
+  if (!await loadSession()) return;
   if (!await checkHealth()) return;
   await Promise.all([loadPublishers(), loadStats(), loadBooks()]);
-  await loadLatestJob();
+  if (state.user.is_admin) await loadLatestJob();
+  return true;
 }
 
 async function loadStats() {
@@ -658,6 +707,7 @@ function clearFilters(reload = true) {
 function switchView(view) {
   const availableViews = ["library", "wishlist", "series", "upcoming", "recommendations", "quality", "sources"];
   if (!availableViews.includes(view)) view = "library";
+  if (!state.user?.is_admin && ["quality", "sources"].includes(view)) view = "library";
   state.view = view;
   if (location.hash !== `#${view}`) history.replaceState(null, "", `#${view}`);
   $$(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.view === view));
@@ -723,6 +773,13 @@ $("#nextSeriesPage").addEventListener("click", () => {
   loadSeries().then(() => window.scrollTo({top: 0, behavior: "smooth"})).catch(error => toast(error.message, true));
 });
 $("#updateButton").addEventListener("click", startUpdate);
+$("#logoutButton").addEventListener("click", async () => {
+  try {
+    await api("/api/auth/logout", {method: "POST", body: "{}"});
+  } finally {
+    location.assign("/");
+  }
+});
 $("#dialogClose").addEventListener("click", () => $("#detailDialog").close());
 $("#detailDialog").addEventListener("click", event => {
   if (event.target === event.currentTarget) event.currentTarget.close();
@@ -742,7 +799,7 @@ document.addEventListener("keydown", event => {
 
 const initialView = location.hash.slice(1);
 loadAll()
-  .then(() => {
-    if (initialView && initialView !== "library") switchView(initialView);
+  .then(loaded => {
+    if (loaded && initialView && initialView !== "library") switchView(initialView);
   })
   .catch(error => toast(error.message, true));

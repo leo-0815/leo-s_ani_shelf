@@ -5,12 +5,26 @@ import csv
 import io
 import mimetypes
 import re
+import secrets
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .auth import (
+    AuthenticationError,
+    OAUTH_STATE_COOKIE,
+    SESSION_COOKIE,
+    begin_google_login,
+    clear_cookie,
+    cookie_value,
+    current_user,
+    finish_google_login,
+    logout,
+    oauth_state_cookie,
+    session_cookie,
+)
 from .config import ROOT, get_settings
 from .crawler import create_job, get_job
 from .db import DatabaseUnavailable, ensure_schema, ping
@@ -92,6 +106,99 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "AniShelf/0.1"
 
     def do_GET(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path == "/api/health":
+                self._health()
+                return
+            if parsed.path == "/api/auth/config":
+                self._json({"google_enabled": get_settings().auth_configured})
+                return
+            if parsed.path == "/api/auth/me":
+                user = current_user(self.headers.get("Cookie"))
+                self._json({"authenticated": bool(user), "user": user})
+                return
+            if parsed.path == "/auth/google":
+                self._start_google_login()
+                return
+            if parsed.path == "/auth/google/callback":
+                self._finish_google_login(parsed)
+                return
+            if not parsed.path.startswith("/api/"):
+                self._static(parsed.path)
+                return
+            user = self._require_user()
+            if user:
+                self._authenticated_get(parsed, user)
+        except AuthenticationError as exc:
+            self._json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
+        except (DatabaseUnavailable, OSError) as exc:
+            self._json({"error": str(exc), "setup_required": True}, HTTPStatus.SERVICE_UNAVAILABLE)
+        except (ValueError, KeyError) as exc:
+            self._json({"error": str(exc).strip("'")}, HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            self._json({"error": f"Server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _authenticated_get(self, parsed: Any, user: dict[str, Any]) -> None:
+        user_id = int(user["id"])
+        if parsed.path == "/api/books":
+            query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+            self._json(list_books(query, user_id, int(query.get("limit", "100")), int(query.get("offset", "0"))))
+        elif match := re.fullmatch(r"/api/books/(\d+)", parsed.path):
+            book = get_book(int(match.group(1)), user_id)
+            self._json(book or {"error": "Book not found"}, HTTPStatus.OK if book else HTTPStatus.NOT_FOUND)
+        elif match := re.fullmatch(r"/api/books/(\d+)/recommendations", parsed.path):
+            query = parse_qs(parsed.query)
+            self._json({"items": list_book_recommendations(user_id, int(match.group(1)), int(query.get("limit", ["8"])[0]))})
+        elif parsed.path == "/api/publishers":
+            items = list_publishers()
+            if not user.get("is_admin"):
+                public_fields = {"code", "name", "enabled", "book_count"}
+                items = [{key: value for key, value in item.items() if key in public_fields} for item in items]
+            self._json({"items": items})
+        elif parsed.path == "/api/series":
+            query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+            self._json(list_series(query, user_id, int(query.get("limit", "100")), int(query.get("offset", "0"))))
+        elif parsed.path == "/api/series/detail":
+            query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+            series = get_series(user_id, query.get("publisher", ""), query.get("title", ""))
+            self._json(series or {"error": "Series not found"}, HTTPStatus.OK if series else HTTPStatus.NOT_FOUND)
+        elif parsed.path == "/api/quality":
+            if self._require_admin(user):
+                self._json(quality_report())
+        elif parsed.path == "/api/upcoming":
+            query = parse_qs(parsed.query)
+            self._json({"items": upcoming_books(user_id, int(query.get("days", ["31"])[0]))})
+        elif parsed.path == "/api/recommendations":
+            query = parse_qs(parsed.query)
+            self._json(list_recommendations(user_id, int(query.get("limit", ["60"])[0])))
+        elif parsed.path in {"/api/export.json", "/api/export.csv"}:
+            query = parse_qs(parsed.query)
+            wishlist_only = query.get("wishlist", ["0"])[0] == "1"
+            if not wishlist_only and not self._require_admin(user):
+                return
+            if parsed.path.endswith(".json"):
+                content = json.dumps(export_catalog(user_id, wishlist_only), ensure_ascii=False, indent=2, default=str).encode("utf-8")
+                self._download(content, "application/json; charset=utf-8", "anishelf-export.json")
+            else:
+                self._export_csv(user_id, wishlist_only)
+        elif parsed.path == "/api/calendar.ics":
+            query = parse_qs(parsed.query)
+            self._export_calendar(user_id, int(query.get("days", ["90"])[0]))
+        elif parsed.path == "/api/stats":
+            self._json(stats(user_id))
+        elif parsed.path == "/api/jobs/latest":
+            if self._require_admin(user):
+                self._json(get_job() or {})
+        elif match := re.fullmatch(r"/api/jobs/(\d+)", parsed.path):
+            if not self._require_admin(user):
+                return
+            job = get_job(int(match.group(1)))
+            self._json(job or {"error": "Job not found"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
+        else:
+            self._json({"error": "API not found"}, HTTPStatus.NOT_FOUND)
+
+    def _legacy_do_GET(self) -> None:
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/api/health":
@@ -181,6 +288,61 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         try:
+            user = self._require_user()
+            if not user or not self._require_csrf(user):
+                return
+            if parsed.path == "/api/auth/logout":
+                logout(self.headers.get("Cookie"))
+                self._json({"ok": True}, cookies=[clear_cookie(SESSION_COOKIE)])
+                return
+            payload = self._body()
+            user_id = int(user["id"])
+            if parsed.path == "/api/update":
+                if not self._require_admin(user):
+                    return
+                job_id = create_job(str(payload.get("source", "all")), force=bool(payload.get("force", True)))
+                if job_id is None:
+                    self._json({"job_id": None, "status": "skipped", "reason": "cooldown"})
+                else:
+                    self._json({"job_id": job_id, "status": "queued"}, HTTPStatus.ACCEPTED)
+            elif parsed.path == "/api/series/follow":
+                set_series_follow(
+                    user_id,
+                    str(payload.get("publisher", "")),
+                    str(payload.get("series_title", "")),
+                    str(payload.get("media_type", "unknown")),
+                    bool(payload.get("following", True)),
+                )
+                self._json({"ok": True})
+            elif parsed.path == "/api/recommendations/dismiss":
+                dismiss_recommendation(user_id, int(payload.get("book_id", 0)))
+                self._json({"ok": True})
+            elif match := re.fullmatch(r"/api/wishlist/(\d+)", parsed.path):
+                set_wishlist(
+                    user_id,
+                    int(match.group(1)),
+                    str(payload.get("state", "wanted")),
+                    str(payload.get("notes", "")),
+                    bool(payload.get("follow_series", False)),
+                    int(payload.get("priority", 0)),
+                    str(payload.get("store_name", "")),
+                    str(payload.get("order_number", "")),
+                    int(payload["paid_price"]) if str(payload.get("paid_price", "")).isdigit() else None,
+                    str(payload.get("owned_format", "paper")),
+                )
+                self._json({"ok": True})
+            else:
+                self._json({"error": "API not found"}, HTTPStatus.NOT_FOUND)
+        except (DatabaseUnavailable, OSError) as exc:
+            self._json({"error": str(exc), "setup_required": True}, HTTPStatus.SERVICE_UNAVAILABLE)
+        except (ValueError, KeyError) as exc:
+            self._json({"error": str(exc).strip("'")}, HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            self._json({"error": f"Server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _legacy_do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        try:
             payload = self._body()
             if parsed.path == "/api/update":
                 job_id = create_job(
@@ -230,6 +392,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         try:
+            user = self._require_user()
+            if not user or not self._require_csrf(user):
+                return
+            user_id = int(user["id"])
+            if parsed.path == "/api/recommendations/dismissals":
+                clear_recommendation_dismissals(user_id)
+                self._json({"ok": True})
+                return
+            match = re.fullmatch(r"/api/wishlist/(\d+)", parsed.path)
+            if not match:
+                self._json({"error": "API not found"}, HTTPStatus.NOT_FOUND)
+                return
+            delete_wishlist(user_id, int(match.group(1)))
+            self._json({"ok": True})
+        except Exception as exc:
+            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _legacy_do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        try:
             if parsed.path == "/api/recommendations/dismissals":
                 clear_recommendation_dismissals()
                 self._json({"ok": True})
@@ -242,6 +424,55 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
         except Exception as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _require_user(self) -> dict[str, Any] | None:
+        user = current_user(self.headers.get("Cookie"))
+        if not user:
+            self._json({"error": "Authentication required"}, HTTPStatus.UNAUTHORIZED)
+        return user
+
+    def _require_admin(self, user: dict[str, Any]) -> bool:
+        if user.get("role") != "admin":
+            self._json({"error": "Administrator permission required"}, HTTPStatus.FORBIDDEN)
+            return False
+        return True
+
+    def _require_csrf(self, user: dict[str, Any]) -> bool:
+        expected = str(user.get("csrf_token") or "")
+        supplied = self.headers.get("X-CSRF-Token", "")
+        if not expected or not secrets.compare_digest(expected, supplied):
+            self._json({"error": "Invalid CSRF token"}, HTTPStatus.FORBIDDEN)
+            return False
+        return True
+
+    def _start_google_login(self) -> None:
+        location, state = begin_google_login()
+        self._redirect(location, [oauth_state_cookie(state)])
+
+    def _finish_google_login(self, parsed: Any) -> None:
+        query = parse_qs(parsed.query)
+        if query.get("error"):
+            raise AuthenticationError("Google 登入已取消")
+        state = query.get("state", [""])[0]
+        code = query.get("code", [""])[0]
+        cookie_state = cookie_value(self.headers.get("Cookie"), OAUTH_STATE_COOKIE)
+        token, _user = finish_google_login(code, state, cookie_state)
+        self._redirect(
+            "/",
+            [
+                session_cookie(token),
+                clear_cookie(OAUTH_STATE_COOKIE, path="/auth/google/callback"),
+            ],
+        )
+
+    def _redirect(self, location: str, cookies: list[str] | None = None) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        for cookie in cookies or []:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
 
     def _health(self) -> None:
         settings = get_settings()
@@ -284,12 +515,19 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
-    def _json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+    def _json(
+        self,
+        payload: Any,
+        status: HTTPStatus = HTTPStatus.OK,
+        cookies: list[str] | None = None,
+    ) -> None:
         content = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
+        for cookie in cookies or []:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(content)
 
@@ -302,8 +540,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _export_csv(self, wishlist_only: bool) -> None:
-        data = export_catalog(wishlist_only)
+    def _export_csv(self, user_id: int, wishlist_only: bool) -> None:
+        data = export_catalog(user_id, wishlist_only)
         output = io.StringIO()
         fields = [
             "publisher_name",
@@ -334,14 +572,14 @@ class Handler(BaseHTTPRequestHandler):
             "anishelf-export.csv",
         )
 
-    def _export_calendar(self, days: int) -> None:
+    def _export_calendar(self, user_id: int, days: int) -> None:
         lines = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
             "PRODID:-//AniShelf//Release Calendar//ZH-TW",
             "CALSCALE:GREGORIAN",
         ]
-        for book in upcoming_books(days):
+        for book in upcoming_books(user_id, days):
             if not book["release_date"]:
                 continue
             stamp = book["release_date"].replace("-", "")
