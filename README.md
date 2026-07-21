@@ -5,6 +5,8 @@ HTML/CSS/JavaScript，避免 Node、Redis、Docker、瀏覽器引擎及圖片下
 
 ## 目前狀態
 
+- 線上版：<https://anishelf-wmcu.onrender.com>；本機版仍可獨立使用，不會被雲端部署取代
+- Google OAuth 帳號登入；一般帳號擁有個人書架與通知，管理員另可查看資料品質與更新工具
 - Library、搜尋與出版社／類型／狀態篩選
 - 完整分頁、日期區間、版本、訂選狀態與多種排序
 - 系列書架：集數與一般版／限定版集中顯示，並提示可能缺少的集數
@@ -32,6 +34,8 @@ HTML/CSS/JavaScript，避免 Node、Redis、Docker、瀏覽器引擎及圖片下
 - 長鴻公開封存分頁月度新書表（日期精度，跨月重複自動去除）
 
 系統不保存原始 HTML，也不下載封面；只保存必要書目、來源網址、內容雜湊與日期異動。
+線上每日排程目前更新台灣東販、青文、台灣角川、東立與尖端；長鴻程式及既有資料
+仍保留，但因官方頁面失效且使用優先度較低，暫不納入線上排程。
 
 ## 第一次使用
 
@@ -97,8 +101,15 @@ Render Blueprint 建立時需由管理者直接填入下列秘密值，請勿寫
 - `ANISHELF_DB_USER`
 - `ANISHELF_DB_PASSWORD`
 
-每日更新與通知由 GitHub Actions 執行。Discord webhook 與 SMTP 寄件設定只放在
-Repository Actions Secrets；完整欄位與驗收流程請參考 `docs/notifications-setup.md`。
+每日更新與通知由 GitHub Actions 在台灣時間 08:15 執行。Discord webhook 與 SMTP
+寄件設定只放在 Repository Actions Secrets；完整欄位與驗收流程請參考
+`docs/notifications-setup.md`。手動執行 `Scheduled catalog update` 時可勾選
+`test_email_only`，只寄一封 Gmail SMTP 測試信，不更新出版社資料，也不建立正式通知
+紀錄。
+
+每位使用者可在網站的「通知設定」自行啟用 Email，收件地址使用已驗證的 Google
+登入信箱；通知包含上市前 7、3、1 天與上市當天、日期異動及追蹤系列新刊。Discord
+仍為管理員專用的排程摘要與錯誤告警。
 
 `.github/workflows/ci.yml` 會在 push 與 Pull Request 上使用 Python 3.10、3.12 執行
 完整測試。部署建議保持 `checksPass`，只有 CI 通過才更新正式服務。

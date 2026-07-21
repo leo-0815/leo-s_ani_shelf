@@ -38,7 +38,8 @@
 ## 驗收順序
 
 1. 先新增 Discord webhook secret，手動執行一次排程確認沒有設定錯誤。
-2. 再新增五個 SMTP secrets。
+2. 再新增五個 SMTP secrets；手動執行排程時勾選 `test_email_only`，先寄一封
+   不更新出版社資料、不建立通知紀錄的 SMTP 測試信。
 3. 用管理員與一般帳號各自開啟／關閉通知，確認偏好互不影響。
 4. 在測試資料建立七天內上市的訂選書，手動執行 workflow。
 5. 確認 Email 只寄到已啟用帳號、Discord 只顯示管理員內容。

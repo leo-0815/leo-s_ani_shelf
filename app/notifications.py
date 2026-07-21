@@ -530,6 +530,40 @@ def post_email(
         raise NotificationError(f"SMTP email delivery failed: {exc}") from exc
 
 
+def send_test_email(
+    *,
+    settings: Settings | None = None,
+    recipient: str = "",
+    sender: Callable[[Settings, str, str, str, str], None] = post_email,
+) -> dict[str, Any]:
+    """Send one SMTP smoke-test without creating notification records."""
+    settings = settings or get_settings()
+    if not settings.email_configured:
+        raise NotificationError("SMTP email settings are incomplete")
+    target = recipient.strip() or settings.smtp_username
+    if not target:
+        raise NotificationError("Test email recipient is missing")
+    subject = "AniShelf Email 通知測試成功"
+    plain_body = (
+        "這是一封 AniShelf 測試信。\n\n"
+        "收到這封信代表 GitHub Actions 已成功透過 Gmail SMTP 寄信。"
+    )
+    html_body = (
+        '<div style="font-family:Arial,\'Microsoft JhengHei\',sans-serif;'
+        'max-width:680px;margin:auto;color:#25232a;line-height:1.65">'
+        '<h1 style="font-size:24px;color:#c95845">AniShelf Email 通知測試成功</h1>'
+        '<p>這是一封 AniShelf 測試信。</p>'
+        '<p>收到這封信代表 GitHub Actions 已成功透過 Gmail SMTP 寄信。</p>'
+        "</div>"
+    )
+    sender(settings, target, subject, plain_body, html_body)
+    return {
+        "enabled": True,
+        "delivered_count": 1,
+        "recipient_count": 1,
+    }
+
+
 def deliver_notifications(
     *,
     webhook_url: str,
@@ -626,9 +660,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Preview or send AniShelf Discord notifications")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--since-hours", type=int, default=36)
+    parser.add_argument("--test-email", action="store_true")
     args = parser.parse_args()
-    ensure_schema()
     settings = get_settings()
+    if args.test_email:
+        print(json.dumps(send_test_email(settings=settings), ensure_ascii=False, indent=2))
+        return
+    ensure_schema()
     result = deliver_notifications(
         webhook_url=settings.discord_webhook_url,
         since=datetime.utcnow() - timedelta(hours=max(1, args.since_hours)),
