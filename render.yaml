@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: anishelf
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install --disable-pip-version-check -r requirements.txt
+    startCommand: python anishelf.py run
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: ANISHELF_CLOUD_MODE
+        value: "true"
+      - key: ANISHELF_AUTO_UPDATE
+        value: "false"
+      - key: ANISHELF_HOST
+        value: 0.0.0.0
+      - key: ANISHELF_DB_SSL_MODE
+        value: verify_identity
+      - key: ANISHELF_DB_HOST
+        sync: false
+      - key: ANISHELF_DB_PORT
+        value: "4000"
+      - key: ANISHELF_DB_NAME
+        sync: false
+      - key: ANISHELF_DB_USER
+        sync: false
+      - key: ANISHELF_DB_PASSWORD
+        sync: false

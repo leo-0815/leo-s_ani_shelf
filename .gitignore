@@ -1,0 +1,9 @@
+.env
+.anishelf.lock
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vendor/
+logs/
+backups/
+*.log

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>AniShelf｜漫畫與輕小說收藏管理</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#library" aria-label="AniShelf 首頁">
+          <span class="brand-mark">A</span>
+          <span><strong>AniShelf</strong><small>出版追蹤書架</small></span>
+        </a>
+        <nav aria-label="主要導覽">
+          <button class="nav-item active" data-view="library"><span>▦</span>Library</button>
+          <button class="nav-item" data-view="series"><span>▤</span>系列書架</button>
+          <button class="nav-item" data-view="upcoming"><span>◷</span>近期上市</button>
+          <button class="nav-item" data-view="wishlist"><span>♡</span>已訂選</button>
+          <button class="nav-item" data-view="recommendations"><span>✦</span>為你推薦</button>
+          <button class="nav-item" data-view="quality"><span>◇</span>資料品質</button>
+          <button class="nav-item" data-view="sources"><span>↻</span>資料來源</button>
+        </nav>
+        <div class="sidebar-foot">
+          <span class="health-dot" id="healthDot"></span>
+          <span id="healthText">檢查系統中…</span>
+        </div>
+      </aside>
+
+      <main>
+        <section class="setup-banner hidden" id="setupBanner">
+          <div><strong>還差一步即可使用</strong><p id="setupMessage">MySQL 尚未初始化。</p></div>
+          <code>python anishelf.py setup</code>
+        </section>
+
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="pageEyebrow">MY COLLECTION</p>
+            <h1 id="pageTitle">Library</h1>
+          </div>
+          <div class="top-actions">
+            <label class="searchbox" id="searchBox">
+              <span>⌕</span>
+              <input id="searchInput" type="search" placeholder="搜尋部分書名、作者或 ISBN" autocomplete="off" />
+              <kbd>Ctrl K</kbd>
+            </label>
+            <button class="primary" id="updateButton"><span>↻</span>更新資料</button>
+          </div>
+        </header>
+
+        <section class="stats" aria-label="資料摘要">
+          <article><span class="stat-icon coral">▦</span><div><small>所有書目</small><strong id="statTotal">—</strong></div></article>
+          <article><span class="stat-icon amber">◷</span><div><small>即將出版</small><strong id="statScheduled">—</strong></div></article>
+          <article><span class="stat-icon mint">✓</span><div><small>已上市</small><strong id="statAvailable">—</strong></div></article>
+          <article><span class="stat-icon slate">?</span><div><small>資料缺日期</small><strong id="statUnknown">—</strong></div></article>
+          <article><span class="stat-icon violet">♡</span><div><small>已訂選／追蹤</small><strong id="statWishlist">—</strong></div></article>
+        </section>
+
+        <section class="content-card view-section" id="libraryView">
+          <div class="toolbar">
+            <div class="filters">
+              <select id="publisherFilter" aria-label="出版社"><option value="">全部出版社</option></select>
+              <select id="typeFilter" aria-label="類型">
+                <option value="">漫畫與小說</option><option value="manga">漫畫</option><option value="novel">輕小說</option>
+              </select>
+              <select id="statusFilter" aria-label="上市狀態">
+                <option value="">所有狀態</option><option value="scheduled">預定出版</option><option value="scheduled_undated">官方預定・日期未公布</option><option value="available">已上市</option><option value="unknown">資料缺日期</option>
+              </select>
+              <select id="editionFilter" aria-label="版本">
+                <option value="">所有版本</option><option value="standard">一般版</option><option value="special">特裝版</option><option value="limited">限定版</option><option value="first_print">首刷限定</option><option value="deluxe">豪華限定</option><option value="collector">收藏版</option><option value="digital">電子版</option>
+              </select>
+              <select class="hidden" id="wishlistStateFilter" aria-label="訂選狀態">
+                <option value="">所有訂選狀態</option><option value="wanted">想買</option><option value="preordered">已預購</option><option value="purchased">已購入</option><option value="paused">暫不購買</option>
+              </select>
+              <select id="sortFilter" aria-label="排序">
+                <option value="">最新上市</option><option value="release_asc">最早上市</option><option value="added_desc">最近收錄</option><option value="updated_desc">最近變更</option><option value="title_asc">書名排序</option>
+              </select>
+              <label class="date-filter">從<input id="dateFromFilter" type="date" aria-label="開始日期" /></label>
+              <label class="date-filter">到<input id="dateToFilter" type="date" aria-label="結束日期" /></label>
+              <button class="secondary compact" id="clearFilters">清除條件</button>
+            </div>
+            <p class="result-count" id="resultCount">讀取中…</p>
+          </div>
+          <div class="book-grid" id="bookGrid"></div>
+          <div class="empty hidden" id="emptyState"><span>⌕</span><h2>目前沒有符合的書目</h2><p>試著調整搜尋或篩選條件。</p></div>
+          <div class="pagination" id="pagination">
+            <button class="secondary" id="previousPage">← 上一頁</button>
+            <span id="pageIndicator">第 1 頁</span>
+            <button class="secondary" id="nextPage">下一頁 →</button>
+          </div>
+        </section>
+
+        <section class="content-card view-section hidden" id="seriesView">
+          <div class="section-heading">
+            <div><p class="eyebrow">SERIES SHELF</p><h2>系列與版本分組</h2></div>
+            <p id="seriesCount">讀取中…</p>
+          </div>
+          <div class="series-grid" id="seriesGrid"></div>
+          <div class="pagination hidden" id="seriesPagination">
+            <button class="secondary" id="previousSeriesPage">← 上一頁</button>
+            <span id="seriesPageIndicator">第 1 頁</span>
+            <button class="secondary" id="nextSeriesPage">下一頁 →</button>
+          </div>
+        </section>
+
+        <section class="content-card view-section hidden" id="upcomingView">
+          <div class="section-heading action-heading">
+            <div><p class="eyebrow">RELEASE CALENDAR</p><h2>近期上市</h2></div>
+            <div class="heading-actions">
+              <select id="upcomingDays" aria-label="日期範圍"><option value="7">未來 7 天</option><option value="31" selected>未來 31 天</option><option value="90">未來 90 天</option></select>
+              <a class="secondary button-link" href="/api/calendar.ics?days=90">匯出日曆</a>
+              <button class="secondary" id="notifyButton">啟用瀏覽器提醒</button>
+            </div>
+          </div>
+          <div class="timeline" id="upcomingList"></div>
+        </section>
+
+        <section class="content-card view-section hidden" id="recommendationsView">
+          <div class="section-heading action-heading">
+            <div>
+              <p class="eyebrow">FOR YOU</p>
+              <h2>依照你的已購入收藏推薦</h2>
+            </div>
+            <button class="secondary" id="restoreRecommendations">重新顯示已忽略項目</button>
+          </div>
+          <div class="recommendation-note">
+            只使用本機的已購入與系列追蹤紀錄做規則比對：優先找同系列，再找同作者作品，不會上傳你的收藏資料。
+          </div>
+          <div class="series-prompts" id="seriesPrompts"></div>
+          <div class="recommendation-grid" id="recommendationGrid"></div>
+          <div class="empty hidden" id="recommendationEmpty">
+            <span>✦</span>
+            <h2>還沒有可用的推薦</h2>
+            <p id="recommendationEmptyText">先將收藏中的書標記為「已購入」，系統就會開始整理同系列與同作者作品。</p>
+          </div>
+        </section>
+
+        <section class="content-card view-section hidden" id="qualityView">
+          <div class="section-heading">
+            <div><p class="eyebrow">DATA CHECK</p><h2>資料品質</h2></div>
+            <p>標記缺漏與可疑資料，不會自行刪除。</p>
+          </div>
+          <div class="quality-summary" id="qualitySummary"></div>
+          <div class="quality-list" id="qualityList"></div>
+        </section>
+
+        <section class="content-card view-section hidden" id="sourcesView">
+          <div class="section-heading action-heading">
+            <div><p class="eyebrow">SOURCE HEALTH</p><h2>資料來源與備份</h2></div>
+            <div class="heading-actions">
+              <a class="secondary button-link" href="/api/export.json">備份 JSON</a>
+              <a class="secondary button-link" href="/api/export.csv">匯出 CSV</a>
+              <a class="secondary button-link" href="/api/export.csv?wishlist=1">匯出訂選</a>
+            </div>
+          </div>
+          <div class="source-note">啟動時若六小時內已成功更新，會自動略過；右上角按鍵仍可強制更新。</div>
+          <div class="source-list" id="sourceList"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="detailDialog">
+      <button class="dialog-close" aria-label="關閉" id="dialogClose">×</button>
+      <div id="detailContent"></div>
+    </dialog>
+
+    <dialog id="seriesDialog">
+      <button class="dialog-close" aria-label="關閉" id="seriesDialogClose">×</button>
+      <div id="seriesDetailContent"></div>
+    </dialog>
+
+    <dialog class="prompt-dialog" id="followPromptDialog">
+      <div class="prompt-content">
+        <span class="prompt-icon">✦</span>
+        <p class="eyebrow">SERIES FOLLOW</p>
+        <h2>要追蹤這個系列嗎？</h2>
+        <p id="followPromptText"></p>
+        <div class="form-actions">
+          <button class="primary" id="followPromptAccept">追蹤系列</button>
+          <button class="secondary" id="followPromptLater">稍後再說</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div class="toast hidden" id="toast" role="status"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
