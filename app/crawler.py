@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import traceback
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Iterable
 
 from .db import transaction
 from .repository import (
@@ -106,7 +106,28 @@ def run_incremental(source_code: str = "all") -> int:
     return job_id
 
 
-def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
+def run_incremental_sources(source_codes: Iterable[str]) -> int:
+    """Run one foreground job for an explicit group of scheduled sources."""
+    codes = tuple(dict.fromkeys(str(code).strip() for code in source_codes if str(code).strip()))
+    if not codes or any(code not in SOURCES for code in codes):
+        raise ValueError("排程包含尚未支援的出版社")
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO crawl_jobs (source_code, status) VALUES (%s, 'queued')",
+                ("scheduled",),
+            )
+            job_id = int(cursor.lastrowid)
+    _run_job(job_id, "scheduled", "incremental", codes)
+    return job_id
+
+
+def _run_job(
+    job_id: int,
+    source_code: str,
+    mode: str = "incremental",
+    source_codes: Iterable[str] | None = None,
+) -> None:
     if not _job_lock.acquire(blocking=False):
         _finish_job(job_id, "failed", message="已有另一個更新工作正在執行")
         return
@@ -114,7 +135,9 @@ def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
     messages: list[str] = []
     try:
         _start_job(job_id)
-        codes = list(SOURCES) if source_code == "all" else [source_code]
+        codes = list(source_codes) if source_codes is not None else (
+            list(SOURCES) if source_code == "all" else [source_code]
+        )
         for code in codes:
             source = SOURCES[code]()
             try:
