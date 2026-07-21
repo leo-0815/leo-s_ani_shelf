@@ -20,6 +20,11 @@ class CloudSchemaTests(unittest.TestCase):
         self.assertIn("csrf_token CHAR(64) NOT NULL", self.schema)
         self.assertIn("fk_sessions_user", self.schema)
 
+    def test_notification_deliveries_have_an_idempotency_key(self) -> None:
+        self.assertIn("CREATE TABLE IF NOT EXISTS notification_deliveries", self.schema)
+        self.assertIn("UNIQUE KEY uq_notification_delivery (channel, event_key)", self.schema)
+        self.assertIn("fk_notification_user", self.schema)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,21 @@
 - [ ] 建立 Google Cloud 專案與 OAuth consent screen
 - [ ] 建立 Discord Incoming Webhook
 
+## GitHub Actions 排程密鑰
+
+在 Repository 的 `Settings → Secrets and variables → Actions` 建立：
+
+- `ANISHELF_DB_HOST`
+- `ANISHELF_DB_PORT`
+- `ANISHELF_DB_NAME`
+- `ANISHELF_DB_USER`
+- `ANISHELF_DB_PASSWORD`
+- `ANISHELF_DISCORD_WEBHOOK_URL`
+
+排程每天台北時間 08:15 執行增量更新，並只將管理員帳號的訂選與追蹤內容送到 Discord。
+由於 GitHub 的定時 workflow 只從預設分支執行，合併後需將 Repository default branch 設為
+`cloud/deployment`；本機版 `main` 分支仍會保留，不會被刪除或合併。
+
 密碼、資料庫連線密碼、OAuth Client Secret 與 Discord Webhook URL 僅能存入
 GitHub Secrets 或 Render Environment，不得提交至 Repository 或貼入工作紀錄。
 
