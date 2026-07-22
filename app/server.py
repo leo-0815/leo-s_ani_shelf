@@ -30,6 +30,7 @@ from .crawler import create_job, get_job
 from .db import DatabaseUnavailable, ensure_schema, ping
 from .notifications import (
     NotificationError,
+    dispatch_test_email_workflow,
     get_notification_preferences,
     send_test_discord,
     send_test_email,
@@ -199,7 +200,12 @@ class Handler(BaseHTTPRequestHandler):
             settings = get_settings()
             preferences.update(
                 {
-                    "email_configured": settings.email_configured,
+                    "email_configured": (
+                        settings.github_email_test_configured
+                        if settings.email_test_mode == "github_actions"
+                        else settings.email_configured
+                    ),
+                    "email_test_mode": settings.email_test_mode,
                     "discord_configured": bool(settings.discord_webhook_url)
                     if user.get("is_admin")
                     else False,
@@ -342,11 +348,20 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/notification-preferences":
                 self._json(set_notification_preferences(user_id, payload))
             elif parsed.path == "/api/notifications/test-email":
-                result = send_test_email(
-                    settings=get_settings(),
-                    recipient=str(user.get("email") or ""),
-                )
-                self._json({**result, "message": "測試信已寄出，請查看收件匣"})
+                settings = get_settings()
+                if settings.email_test_mode == "github_actions":
+                    result = dispatch_test_email_workflow(
+                        settings=settings,
+                        user_id=user_id,
+                    )
+                    message = "測試信已排入寄送，通常會在 1 分鐘內送達"
+                else:
+                    result = send_test_email(
+                        settings=settings,
+                        recipient=str(user.get("email") or ""),
+                    )
+                    message = "測試信已寄出，請查看收件匣"
+                self._json({**result, "message": message})
             elif parsed.path == "/api/notifications/test-discord":
                 if not self._require_admin(user):
                     return

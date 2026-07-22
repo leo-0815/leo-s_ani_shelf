@@ -12,6 +12,7 @@ from email.message import EmailMessage
 from html import escape
 from typing import Any, Callable, Iterable
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -564,6 +565,81 @@ def send_test_email(
     }
 
 
+def send_test_email_to_user(
+    user_id: int,
+    *,
+    settings: Settings | None = None,
+    sender: Callable[[Settings, str, str, str, str], None] = post_email,
+) -> dict[str, Any]:
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT email FROM users WHERE id = %s AND is_active = TRUE",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+    if not row or not row.get("email"):
+        raise NotificationError("找不到可寄送測試信的使用者")
+    return send_test_email(
+        settings=settings,
+        recipient=str(row["email"]),
+        sender=sender,
+    )
+
+
+def dispatch_test_email_workflow(
+    *,
+    settings: Settings,
+    user_id: int,
+    opener: Callable[..., Any] = urlopen,
+) -> dict[str, Any]:
+    """Queue a per-user SMTP test through GitHub Actions over HTTPS."""
+    if not settings.github_email_test_configured:
+        raise NotificationError("GitHub Actions Email 測試尚未設定")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", settings.github_repository):
+        raise NotificationError("GitHub repository 設定格式錯誤")
+    repository = "/".join(quote(part, safe="") for part in settings.github_repository.split("/"))
+    workflow = quote(settings.github_workflow, safe="")
+    url = f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/dispatches"
+    payload = json.dumps(
+        {
+            "ref": settings.github_ref,
+            "inputs": {
+                "test_email_only": False,
+                "test_database_only": False,
+                "test_email_user_id": str(int(user_id)),
+            },
+        }
+    ).encode("utf-8")
+    request = Request(
+        url,
+        data=payload,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {settings.github_actions_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "AniShelf/1.0",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="POST",
+    )
+    try:
+        with opener(request, timeout=20) as response:
+            if response.status not in {200, 204}:
+                raise NotificationError(
+                    f"GitHub Actions dispatch returned HTTP {response.status}"
+                )
+    except HTTPError as exc:
+        raise NotificationError(
+            f"GitHub Actions dispatch returned HTTP {exc.code}"
+        ) from exc
+    except URLError as exc:
+        raise NotificationError(
+            f"GitHub Actions dispatch failed: {exc.reason}"
+        ) from exc
+    return {"enabled": True, "queued": True}
+
+
 def send_test_discord(
     *,
     webhook_url: str,
@@ -680,10 +756,21 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--since-hours", type=int, default=36)
     parser.add_argument("--test-email", action="store_true")
+    parser.add_argument("--test-user-id", type=int)
     args = parser.parse_args()
     settings = get_settings()
     if args.test_email:
         print(json.dumps(send_test_email(settings=settings), ensure_ascii=False, indent=2))
+        return
+    if args.test_user_id:
+        ensure_schema()
+        print(
+            json.dumps(
+                send_test_email_to_user(args.test_user_id, settings=settings),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
     ensure_schema()
     result = deliver_notifications(

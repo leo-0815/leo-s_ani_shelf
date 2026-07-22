@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import unittest
+import json
 from datetime import date, datetime
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.notifications import (
     MAX_DISCORD_CONTENT,
@@ -20,6 +21,7 @@ from app.notifications import (
     deliver_email_notifications,
     send_test_email,
     send_test_discord,
+    dispatch_test_email_workflow,
 )
 
 
@@ -175,6 +177,32 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(sent[0][0], "https://discord.example/webhook")
         self.assertIn("Discord 通知測試成功", sent[0][1])
         self.assertIn("/#notifications", sent[0][1])
+
+    def test_github_actions_relay_dispatches_only_the_current_user_id(self) -> None:
+        settings = SimpleNamespace(
+            github_email_test_configured=True,
+            github_repository="leo-0815/leo-s_ani_shelf",
+            github_workflow="scheduled-update.yml",
+            github_ref="cloud/deployment",
+            github_actions_token="secret-token",
+        )
+        response = MagicMock(status=204)
+        opener = MagicMock()
+        opener.return_value.__enter__.return_value = response
+
+        result = dispatch_test_email_workflow(
+            settings=settings,
+            user_id=7,
+            opener=opener,
+        )
+
+        request = opener.call_args.args[0]
+        payload = json.loads(request.data)
+        self.assertTrue(result["queued"])
+        self.assertEqual(payload["inputs"]["test_email_user_id"], "7")
+        self.assertEqual(payload["ref"], "cloud/deployment")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertNotIn("secret-token", request.full_url)
 
 
 if __name__ == "__main__":

@@ -112,6 +112,10 @@ Render Blueprint 建立時需由管理者直接填入下列秘密值，請勿寫
 可從設定頁寄送 Email 測試信；管理員另可查看 Discord 連線狀態並寄送測試訊息。Discord
 仍為管理員專用的排程摘要與錯誤告警。
 
+Render Free 封鎖 SMTP 連接埠，因此正式網站的 Email 測試使用 HTTPS 觸發既有 GitHub
+Actions 工作，再由 Actions 透過 Gmail SMTP 寄到目前帳號。Render 僅保存一枚限制於
+本 repository 且只允許 Actions 寫入的 fine-grained token，不保存 Gmail App Password。
+
 `.github/workflows/ci.yml` 會在 push 與 Pull Request 上使用 Python 3.10、3.12 執行
 完整測試。部署建議保持 `checksPass`，只有 CI 通過才更新正式服務。
 
