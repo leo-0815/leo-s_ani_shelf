@@ -47,4 +47,11 @@
 網站的「通知設定」提供即時連線測試：一般帳號與管理員都可將 Email 測試信寄到
 自己的 Google 登入信箱；只有管理員會看到 Discord 狀態與測試按鈕。這兩種測試都
 不建立正式通知紀錄，也不會影響同一事件的去重結果。
+
+Render Free 無法連到 SMTP 25、465、587 埠。若網站部署在 Free instance，設定
+`ANISHELF_EMAIL_TEST_MODE=github_actions`，並在 Render 加入僅限此 repository、具有
+Actions write 權限的 `ANISHELF_GITHUB_ACTIONS_TOKEN`，以及
+`ANISHELF_GITHUB_REPOSITORY=leo-0815/leo-s_ani_shelf`。網站會透過 HTTPS 排入既有
+workflow，再由 GitHub Actions 使用 SMTP secrets 寄送；Gmail App Password 不必留在
+Render。
 6. 立即重跑 workflow，確認同一事件不會再次寄送。

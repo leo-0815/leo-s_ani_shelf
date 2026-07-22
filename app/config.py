@@ -55,6 +55,11 @@ class Settings:
     smtp_password: str = ""
     email_from: str = ""
     smtp_starttls: bool = True
+    email_test_mode: str = "smtp"
+    github_actions_token: str = ""
+    github_repository: str = ""
+    github_workflow: str = "scheduled-update.yml"
+    github_ref: str = "cloud/deployment"
 
     @property
     def database_configured(self) -> bool:
@@ -71,6 +76,16 @@ class Settings:
             and self.smtp_username
             and self.smtp_password
             and self.email_from
+        )
+
+    @property
+    def github_email_test_configured(self) -> bool:
+        return bool(
+            self.email_test_mode == "github_actions"
+            and self.github_actions_token
+            and self.github_repository
+            and self.github_workflow
+            and self.github_ref
         )
 
 
@@ -121,4 +136,16 @@ def get_settings() -> Settings:
         smtp_password=os.getenv("ANISHELF_SMTP_PASSWORD", "").strip(),
         email_from=os.getenv("ANISHELF_EMAIL_FROM", "").strip(),
         smtp_starttls=_env_bool("ANISHELF_SMTP_STARTTLS", True),
+        email_test_mode=(
+            os.getenv("ANISHELF_EMAIL_TEST_MODE", "smtp").strip().lower()
+            if os.getenv("ANISHELF_EMAIL_TEST_MODE", "smtp").strip().lower()
+            in {"smtp", "github_actions"}
+            else "smtp"
+        ),
+        github_actions_token=os.getenv("ANISHELF_GITHUB_ACTIONS_TOKEN", "").strip(),
+        github_repository=os.getenv("ANISHELF_GITHUB_REPOSITORY", "").strip(),
+        github_workflow=os.getenv(
+            "ANISHELF_GITHUB_WORKFLOW", "scheduled-update.yml"
+        ).strip(),
+        github_ref=os.getenv("ANISHELF_GITHUB_REF", "cloud/deployment").strip(),
     )

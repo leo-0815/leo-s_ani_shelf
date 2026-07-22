@@ -21,6 +21,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.notification_lead_days, (7, 3, 1, 0))
         self.assertEqual(settings.discord_webhook_url, "")
         self.assertFalse(settings.email_configured)
+        self.assertEqual(settings.email_test_mode, "smtp")
+        self.assertFalse(settings.github_email_test_configured)
 
     def test_render_uses_public_bind_port_and_disables_startup_update(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(
@@ -76,6 +78,20 @@ class ConfigTests(unittest.TestCase):
             settings = get_settings()
         self.assertEqual(settings.host, "127.0.0.2")
         self.assertTrue(settings.auto_update)
+
+    def test_github_actions_email_test_requires_scoped_relay_settings(self) -> None:
+        with patch("app.config.load_dotenv"), patch.dict(
+            os.environ,
+            {
+                "ANISHELF_EMAIL_TEST_MODE": "github_actions",
+                "ANISHELF_GITHUB_ACTIONS_TOKEN": "token",
+                "ANISHELF_GITHUB_REPOSITORY": "owner/repository",
+            },
+            clear=True,
+        ):
+            settings = get_settings()
+        self.assertEqual(settings.email_test_mode, "github_actions")
+        self.assertTrue(settings.github_email_test_configured)
 
 
 if __name__ == "__main__":

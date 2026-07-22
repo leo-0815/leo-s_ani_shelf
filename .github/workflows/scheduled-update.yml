@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      test_email_user_id:
+        description: Send a Gmail SMTP test to one AniShelf user id
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -64,7 +69,7 @@ jobs:
             fi
           done
       - name: Update publishers and send notifications
-        if: ${{ github.event_name == 'schedule' || (inputs.test_email_only != true && inputs.test_database_only != true) }}
+        if: ${{ github.event_name == 'schedule' || (inputs.test_email_only != true && inputs.test_database_only != true && inputs.test_email_user_id == '') }}
         run: python -m app.scheduled
       - name: Test TiDB connection
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_database_only == true }}
@@ -72,3 +77,8 @@ jobs:
       - name: Send Gmail SMTP test email
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_email_only == true }}
         run: python -m app.notifications --test-email
+      - name: Send account Gmail SMTP test email
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_email_user_id != '' }}
+        env:
+          ANISHELF_TEST_USER_ID: ${{ inputs.test_email_user_id }}
+        run: python -m app.notifications --test-user-id "$ANISHELF_TEST_USER_ID"

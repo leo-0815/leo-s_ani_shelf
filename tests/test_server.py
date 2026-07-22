@@ -87,6 +87,33 @@ class ServerAuthorizationTests(unittest.TestCase):
         send_test_discord.assert_not_called()
         self.assertEqual(handler.responses[-1][1], 403)
 
+    @patch("app.server.dispatch_test_email_workflow")
+    @patch("app.server.get_settings")
+    def test_render_can_queue_email_test_through_github_actions(
+        self,
+        get_settings: MagicMock,
+        dispatch_test_email_workflow: MagicMock,
+    ) -> None:
+        handler = self.handler()
+        handler.path = "/api/notifications/test-email"
+        handler._require_user = lambda: {
+            "id": 7,
+            "email": "reader@example.com",
+            "role": "user",
+        }
+        handler._require_csrf = lambda user: True
+        handler._body = lambda: {}
+        get_settings.return_value.email_test_mode = "github_actions"
+        dispatch_test_email_workflow.return_value = {"queued": True}
+
+        handler.do_POST()
+
+        dispatch_test_email_workflow.assert_called_once_with(
+            settings=get_settings.return_value,
+            user_id=7,
+        )
+        self.assertIn("1 分鐘內", handler.responses[-1][0]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

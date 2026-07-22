@@ -17,6 +17,7 @@ class ScheduledWorkflowTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", self.workflow)
         self.assertIn("test_email_only:", self.workflow)
         self.assertIn("test_database_only:", self.workflow)
+        self.assertIn("test_email_user_id:", self.workflow)
 
     def test_workflow_runs_the_combined_update_and_notification_command(self) -> None:
         self.assertIn("python -m app.scheduled", self.workflow)
@@ -26,6 +27,7 @@ class ScheduledWorkflowTests(unittest.TestCase):
         self.assertIn("secrets.ANISHELF_EMAIL_FROM", self.workflow)
         self.assertIn("python -m app.notifications --test-email", self.workflow)
         self.assertIn("python -m app.database_check", self.workflow)
+        self.assertIn('python -m app.notifications --test-user-id "$ANISHELF_TEST_USER_ID"', self.workflow)
 
 
 if __name__ == "__main__":
