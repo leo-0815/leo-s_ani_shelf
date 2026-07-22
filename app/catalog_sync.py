@@ -136,7 +136,7 @@ def compare_catalog_manifests(
     def keyed(items: Iterable[dict[str, Any]]) -> dict[tuple[str, str], str]:
         return {
             (str(item.get("publisher_code") or ""), str(item.get("source_key") or "")): str(
-                item.get("source_hash") or ""
+                item.get("sync_hash") or item.get("source_hash") or ""
             )
             for item in items
         }

@@ -29,6 +29,7 @@ from .auth import (
 )
 from .config import ROOT, get_settings
 from .catalog_sync import PROTOCOL_VERSION, ingest_catalog_books
+from .models import SYNC_HASH_VERSION
 from .crawler import create_job, get_job
 from .db import DatabaseUnavailable, close_connection_pools, ensure_schema, ping
 from .notifications import (
@@ -573,11 +574,18 @@ class Handler(BaseHTTPRequestHandler):
     def _catalog_sync_get(self, parsed: Any) -> None:
         query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         if parsed.path == "/api/catalog-sync/status":
-            self._json({"protocol_version": PROTOCOL_VERSION, **catalog_sync_status()})
+            self._json(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "sync_hash_version": SYNC_HASH_VERSION,
+                    **catalog_sync_status(),
+                }
+            )
         elif parsed.path == "/api/catalog-sync/manifest":
             self._json(
                 {
                     "protocol_version": PROTOCOL_VERSION,
+                    "sync_hash_version": SYNC_HASH_VERSION,
                     **catalog_manifest(
                         int(query.get("after_id", "0")), int(query.get("limit", "500"))
                     ),

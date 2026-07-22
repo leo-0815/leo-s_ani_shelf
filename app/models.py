@@ -12,6 +12,46 @@ from typing import Any
 CONTENT_RATINGS = frozenset(
     {"unknown", "general", "protected_6", "guidance_12", "guidance_15", "restricted_18"}
 )
+SYNC_HASH_VERSION = 1
+SYNC_HASH_FIELDS = (
+    "publisher_code",
+    "source_key",
+    "title",
+    "series_title",
+    "volume_label",
+    "edition_type",
+    "media_type",
+    "content_rating",
+    "rating_raw",
+    "rating_source",
+    "rating_confidence",
+    "author",
+    "isbn",
+    "cover_url",
+    "list_price",
+    "release_date",
+    "release_precision",
+    "release_status",
+    "source_url",
+)
+
+
+def catalog_sync_hash(row: dict[str, Any]) -> str:
+    """Stable, versioned peer hash independent of crawler hash migrations."""
+    payload: dict[str, Any] = {}
+    for field in SYNC_HASH_FIELDS:
+        value = row.get(field)
+        if isinstance(value, date):
+            value = value.isoformat()
+        payload[field] = value
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def normalize_content_rating(value: str | None) -> str:

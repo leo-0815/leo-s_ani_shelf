@@ -7,6 +7,8 @@ from .db import transaction
 from .models import (
     CONTENT_RATINGS,
     BookRecord,
+    SYNC_HASH_VERSION,
+    catalog_sync_hash,
     detect_edition,
     extract_volume,
     infer_series_title,
@@ -885,14 +887,27 @@ def catalog_manifest(after_id: int = 0, limit: int = 500) -> dict[str, Any]:
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT b.id, p.code AS publisher_code, b.source_key, b.source_hash, "
-                "b.updated_at FROM books b JOIN publishers p ON p.id = b.publisher_id "
+                "SELECT b.*, p.code AS publisher_code "
+                "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                 "WHERE b.id > %s ORDER BY b.id LIMIT %s",
                 (max(int(after_id), 0), page_limit + 1),
             )
             rows = cursor.fetchall()
     has_more = len(rows) > page_limit
-    items = [serialize_row(row) for row in rows[:page_limit]]
+    items = []
+    for row in rows[:page_limit]:
+        item = serialize_row(row)
+        items.append(
+            {
+                "id": item["id"],
+                "publisher_code": item["publisher_code"],
+                "source_key": item["source_key"],
+                "source_hash": item["source_hash"],
+                "sync_hash": catalog_sync_hash(item),
+                "sync_hash_version": SYNC_HASH_VERSION,
+                "updated_at": item["updated_at"],
+            }
+        )
     return {
         "items": items,
         "next_after_id": int(items[-1]["id"]) if items else max(int(after_id), 0),
