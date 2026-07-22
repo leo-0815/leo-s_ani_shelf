@@ -9,6 +9,8 @@ import secrets
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -27,7 +29,7 @@ from .auth import (
 )
 from .config import ROOT, get_settings
 from .crawler import create_job, get_job
-from .db import DatabaseUnavailable, ensure_schema, ping
+from .db import DatabaseUnavailable, close_connection_pools, ensure_schema, ping
 from .notifications import (
     NotificationError,
     dispatch_test_email_workflow,
@@ -58,6 +60,36 @@ from .repository import (
 
 WEB_ROOT = ROOT / "web"
 _INSTANCE_LOCK: Any = None
+_HEALTH_CACHE: tuple[tuple[Any, ...], float, bool, dict[str, Any]] | None = None
+_HEALTH_CACHE_LOCK = Lock()
+
+
+def _database_health(settings: Any) -> tuple[bool, dict[str, Any]]:
+    """Cache Render's frequent readiness probe without creating repeated TLS sessions."""
+    global _HEALTH_CACHE
+    key = (settings.db_host, settings.db_port, settings.db_name, settings.db_user)
+    now = monotonic()
+    with _HEALTH_CACHE_LOCK:
+        if _HEALTH_CACHE:
+            cached_key, expires_at, ok, payload = _HEALTH_CACHE
+            if cached_key == key and now < expires_at:
+                return ok, dict(payload)
+        try:
+            payload = ping()
+            ok = True
+            ttl = settings.health_cache_seconds
+        except Exception as exc:
+            payload = {"message": str(exc)}
+            ok = False
+            ttl = min(settings.health_cache_seconds, 2)
+        _HEALTH_CACHE = (key, now + ttl, ok, dict(payload))
+        return ok, payload
+
+
+def _clear_health_cache() -> None:
+    global _HEALTH_CACHE
+    with _HEALTH_CACHE_LOCK:
+        _HEALTH_CACHE = None
 
 
 def _instance_lock_path(port: int) -> Path:
@@ -538,12 +570,12 @@ class Handler(BaseHTTPRequestHandler):
                 HTTPStatus.SERVICE_UNAVAILABLE,
             )
             return
-        try:
-            info = ping()
+        ok, info = _database_health(settings)
+        if ok:
             self._json({"ok": True, "configured": True, **info})
-        except Exception as exc:
+        else:
             self._json(
-                {"ok": False, "configured": True, "message": str(exc)},
+                {"ok": False, "configured": True, **info},
                 HTTPStatus.SERVICE_UNAVAILABLE,
             )
 
@@ -699,6 +731,7 @@ def main() -> None:
         print("\nAniShelf 已停止")
     finally:
         server.server_close()
+        close_connection_pools()
         _release_instance_lock()
 
 

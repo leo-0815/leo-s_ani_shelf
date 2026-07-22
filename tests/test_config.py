@@ -23,6 +23,9 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(settings.email_configured)
         self.assertEqual(settings.email_test_mode, "smtp")
         self.assertFalse(settings.github_email_test_configured)
+        self.assertEqual(settings.db_pool_size, 4)
+        self.assertEqual(settings.health_cache_seconds, 20)
+        self.assertEqual(settings.session_touch_minutes, 10)
 
     def test_render_uses_public_bind_port_and_disables_startup_update(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(
@@ -72,12 +75,18 @@ class ConfigTests(unittest.TestCase):
                 "PORT": "10000",
                 "ANISHELF_HOST": "127.0.0.2",
                 "ANISHELF_AUTO_UPDATE": "yes",
+                "ANISHELF_DB_POOL_SIZE": "99",
+                "ANISHELF_HEALTH_CACHE_SECONDS": "0",
+                "ANISHELF_SESSION_TOUCH_MINUTES": "invalid",
             },
             clear=True,
         ):
             settings = get_settings()
         self.assertEqual(settings.host, "127.0.0.2")
         self.assertTrue(settings.auto_update)
+        self.assertEqual(settings.db_pool_size, 10)
+        self.assertEqual(settings.health_cache_seconds, 1)
+        self.assertEqual(settings.session_touch_minutes, 10)
 
     def test_github_actions_email_test_requires_scoped_relay_settings(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(

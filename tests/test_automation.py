@@ -30,5 +30,16 @@ class ScheduledWorkflowTests(unittest.TestCase):
         self.assertIn('python -m app.notifications --test-user-id "$ANISHELF_TEST_USER_ID"', self.workflow)
 
 
+class FrontendBootstrapTests(unittest.TestCase):
+    def test_library_bootstrap_does_not_block_on_redundant_health_request(self) -> None:
+        script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        load_all = script.split("async function loadAll()", 1)[1].split(
+            "async function loadStats()", 1
+        )[0]
+
+        self.assertNotIn("/api/health", load_all)
+        self.assertIn("Promise.all([loadPublishers(), loadStats(), loadBooks()])", load_all)
+
+
 if __name__ == "__main__":
     unittest.main()

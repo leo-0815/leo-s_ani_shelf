@@ -94,6 +94,13 @@ python anishelf.py restore .\anishelf-export.json
 `PORT`；雲端模式綁定 `0.0.0.0`、使用 TiDB TLS 主機名稱驗證，並關閉網站啟動時的
 背景更新，避免 Web Service 重啟時產生重複爬蟲。定時更新之後由 GitHub Actions 負責。
 
+Web Service 使用惰性 TiDB 連線池，預設最多 4 條連線；啟動時不預先連線，也沒有任何
+防休眠或定時暖機請求。Render 閒置休眠行為保持不變。Render 的高頻 health check 會在
+應用程式內短暫快取，登入 session 的 `last_seen_at` 也只會定期更新，以減少遠端 TLS
+連線及不必要的資料庫寫入。可用 `ANISHELF_DB_POOL_SIZE`、
+`ANISHELF_HEALTH_CACHE_SECONDS`、`ANISHELF_SESSION_TOUCH_MINUTES` 調整，Blueprint
+預設值分別為 4、20 秒、10 分鐘。
+
 Render Blueprint 建立時需由管理者直接填入下列秘密值，請勿寫進 Git 或聊天室：
 
 - `ANISHELF_DB_HOST`
