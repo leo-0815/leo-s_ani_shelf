@@ -11,6 +11,11 @@ on:
         required: false
         default: false
         type: boolean
+      test_database_only:
+        description: Test the TiDB connection without updating publishers
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -59,8 +64,11 @@ jobs:
             fi
           done
       - name: Update publishers and send notifications
-        if: ${{ github.event_name == 'schedule' || inputs.test_email_only != true }}
+        if: ${{ github.event_name == 'schedule' || (inputs.test_email_only != true && inputs.test_database_only != true) }}
         run: python -m app.scheduled
+      - name: Test TiDB connection
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_database_only == true }}
+        run: python -m app.database_check
       - name: Send Gmail SMTP test email
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_email_only == true }}
         run: python -m app.notifications --test-email
