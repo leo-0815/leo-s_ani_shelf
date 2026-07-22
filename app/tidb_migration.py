@@ -227,6 +227,15 @@ def ensure_target_schema(endpoint: Endpoint) -> None:
     finally:
         connection.close()
 
+    connection = _connect(endpoint)
+    try:
+        with connection.cursor() as cursor:
+            for statement in _schema_statements():
+                cursor.execute(statement)
+        connection.commit()
+    finally:
+        connection.close()
+
 
 def target_database_exists(endpoint: Endpoint) -> bool:
     connection = _connect(endpoint, include_database=False)
@@ -238,15 +247,6 @@ def target_database_exists(endpoint: Endpoint) -> bool:
                 (endpoint.database,),
             )
             return bool(cursor.fetchone()["present"])
-    finally:
-        connection.close()
-
-    connection = _connect(endpoint)
-    try:
-        with connection.cursor() as cursor:
-            for statement in _schema_statements():
-                cursor.execute(statement)
-        connection.commit()
     finally:
         connection.close()
 

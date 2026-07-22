@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import MagicMock, patch
 
 from app.tidb_migration import (
     Endpoint,
@@ -12,6 +13,7 @@ from app.tidb_migration import (
     _identifier,
     _upsert_sql,
     digest_rows,
+    ensure_target_schema,
 )
 
 
@@ -30,6 +32,29 @@ class TiDBMigrationTests(unittest.TestCase):
         source = Endpoint("example.tidbcloud.com", 4000, "root", "secret", "source")
         target = Endpoint("example.tidbcloud.com", 4000, "root", "secret", "target")
         _ensure_distinct(source, target)
+
+    @patch("app.tidb_migration._schema_statements", return_value=["CREATE TABLE one (id INT)"])
+    @patch("app.tidb_migration._connect")
+    def test_ensure_target_schema_creates_database_and_tables(
+        self, connect: MagicMock, schema_statements: MagicMock
+    ) -> None:
+        admin_connection = MagicMock()
+        database_connection = MagicMock()
+        connect.side_effect = [admin_connection, database_connection]
+        admin_cursor = admin_connection.cursor.return_value.__enter__.return_value
+        database_cursor = database_connection.cursor.return_value.__enter__.return_value
+        endpoint = Endpoint("target.example", 4000, "root", "secret", "anishelf")
+
+        ensure_target_schema(endpoint)
+
+        self.assertEqual(connect.call_count, 2)
+        connect.assert_any_call(endpoint, include_database=False)
+        connect.assert_any_call(endpoint)
+        self.assertIn("CREATE DATABASE IF NOT EXISTS `anishelf`", admin_cursor.execute.call_args.args[0])
+        database_cursor.execute.assert_called_once_with("CREATE TABLE one (id INT)")
+        admin_connection.commit.assert_called_once_with()
+        database_connection.commit.assert_called_once_with()
+        schema_statements.assert_called_once_with()
 
     def test_endpoint_label_never_contains_password(self) -> None:
         endpoint = Endpoint("example.tidbcloud.com", 4000, "root", "top-secret", "anishelf")
