@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS books (
     volume_label VARCHAR(80) NULL,
     edition_type VARCHAR(40) NOT NULL DEFAULT 'standard',
     media_type VARCHAR(40) NOT NULL DEFAULT 'unknown',
+    content_rating VARCHAR(30) NOT NULL DEFAULT 'unknown',
+    rating_raw VARCHAR(100) NULL,
+    rating_source VARCHAR(30) NOT NULL DEFAULT 'unknown',
+    rating_confidence TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    rating_locked BOOLEAN NOT NULL DEFAULT FALSE,
     author VARCHAR(500) NULL,
     isbn VARCHAR(32) NULL,
     cover_url VARCHAR(1000) NULL,
@@ -40,7 +45,34 @@ CREATE TABLE IF NOT EXISTS books (
     KEY idx_books_release (release_date, release_status),
     KEY idx_books_isbn (isbn),
     KEY idx_books_title (normalized_title(190)),
+    KEY idx_books_rating (content_rating, rating_locked),
     CONSTRAINT fk_books_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS catalog_changes (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    book_id BIGINT UNSIGNED NOT NULL,
+    change_type VARCHAR(30) NOT NULL,
+    change_origin VARCHAR(30) NOT NULL DEFAULT 'crawler',
+    source_hash CHAR(64) NOT NULL,
+    changed_fields VARCHAR(500) NOT NULL DEFAULT '*',
+    changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_catalog_changes_book (book_id, id),
+    KEY idx_catalog_changes_origin (change_origin, id),
+    CONSTRAINT fk_catalog_changes_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS catalog_sync_state (
+    peer_code VARCHAR(100) NOT NULL,
+    last_pulled_change_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_pushed_change_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_verified_at DATETIME NULL,
+    last_success_at DATETIME NULL,
+    last_error TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (peer_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS users (

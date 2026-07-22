@@ -31,6 +31,19 @@ class CloudSchemaTests(unittest.TestCase):
         self.assertIn("PRIMARY KEY (user_id)", self.schema)
         self.assertIn("fk_notification_preferences_user", self.schema)
 
+    def test_books_store_explicit_ratings_and_manual_locks(self) -> None:
+        self.assertIn("content_rating VARCHAR(30) NOT NULL DEFAULT 'unknown'", self.schema)
+        self.assertIn("rating_raw VARCHAR(100) NULL", self.schema)
+        self.assertIn("rating_locked BOOLEAN NOT NULL DEFAULT FALSE", self.schema)
+        self.assertIn("KEY idx_books_rating (content_rating, rating_locked)", self.schema)
+
+    def test_catalog_changes_provide_an_incremental_sync_cursor(self) -> None:
+        self.assertIn("CREATE TABLE IF NOT EXISTS catalog_changes", self.schema)
+        self.assertIn("change_origin VARCHAR(30) NOT NULL DEFAULT 'crawler'", self.schema)
+        self.assertIn("KEY idx_catalog_changes_origin (change_origin, id)", self.schema)
+        self.assertIn("CREATE TABLE IF NOT EXISTS catalog_sync_state", self.schema)
+        self.assertIn("last_pulled_change_id BIGINT UNSIGNED NOT NULL DEFAULT 0", self.schema)
+
 
 if __name__ == "__main__":
     unittest.main()

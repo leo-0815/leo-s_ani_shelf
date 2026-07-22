@@ -136,6 +136,7 @@ python -m unittest discover -v
 
 - `app/schema.sql`：MySQL 資料表與索引
 - `app/repository.py`：Library、訂選清單與日期歷史
+- `docs/catalog-sync-foundation.md`：本機／雲端書目同步游標與內容分級資料契約
 - `app/sources/`：每家出版社的獨立轉接器
 - `app/crawler.py`：低頻率背景更新工作
 - `app/server.py`：小型本機 HTTP／JSON API
@@ -148,4 +149,5 @@ python -m unittest discover -v
 - 不保存原始頁面、不快取封面、不加入無頭瀏覽器。
 - 封面直接使用來源網址並延遲載入，不佔用本機圖片容量。
 - 大型回填只需執行一次；日常更新以游標與來源商品鍵略過歷史頁及既有詳細頁。
+- 書目異動以輕量變更序號記錄；不保存原始頁面，也不把帳號資料納入本機同步。
 - Library 查詢上限每次 200 筆；資料表保留必要索引。
