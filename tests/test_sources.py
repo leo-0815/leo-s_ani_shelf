@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from unittest.mock import patch
 
 from app.sources.chingwin import ChingWinSource
 from app.sources.egmanga import EgMangaSource
@@ -12,6 +13,54 @@ from app.sources.tongli import TongLiSource
 
 
 class SourceParserTests(unittest.TestCase):
+    def test_tohan_backfill_resumes_with_one_page_overlap(self) -> None:
+        page_one = """
+        <a href="?cid=1&page=2">2</a>
+        <a href="product.php?act=view&cid=1&id=one">book one</a>
+        """
+        page_two = '<a href="product.php?act=view&cid=1&id=two">book two</a>'
+        source = TohanSource()
+        with (
+            patch(
+                "app.repository.get_backfill_progress",
+                return_value={
+                    "catalog_v2_catalog": {"next_page": 3, "completed": False}
+                },
+            ),
+            patch(
+                "app.repository.get_sync_state",
+                return_value={"backfill_completed": False},
+            ),
+            patch(
+                "app.sources.tohan.fetch_html",
+                side_effect=[page_one, page_two],
+            ) as fetch,
+        ):
+            batches = list(
+                source.collect_batches(known_keys={"one", "two"}, backfill=True)
+            )
+
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0][0], [])
+        self.assertTrue(batches[0][1]["completed"])
+        self.assertIn("page=2", fetch.call_args_list[-1].args[0])
+
+    def test_kadokawa_backfill_resumes_with_two_page_overlap(self) -> None:
+        source = KadokawaSource()
+        progress = {
+            "catalog_v2_upcoming": {"next_page": 2, "completed": True},
+            "catalog_v2_manga": {"next_page": 4, "completed": False},
+            "catalog_v2_novel": {"next_page": 2, "completed": True},
+        }
+        with (
+            patch("app.repository.get_backfill_progress", return_value=progress),
+            patch.object(source, "_fetch", return_value="<html></html>") as fetch,
+        ):
+            batches = list(source.collect_batches(known_keys=set(), backfill=True))
+
+        self.assertEqual(len(batches), 1)
+        self.assertIn("page=2", fetch.call_args.args[0])
+
     def test_tohan_detail_uses_document_title_when_og_title_is_generic(self) -> None:
         markup = """
         <html><head>

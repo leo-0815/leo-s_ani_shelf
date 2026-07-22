@@ -4,10 +4,17 @@ import unittest
 from unittest.mock import patch
 
 from app.history_runner import current_history_year
+from app.crawler import HISTORY_SOURCES
 from app.sources.common import history_cutoff, history_segment
 
 
 class HistoryRunnerTests(unittest.TestCase):
+    def test_history_job_covers_all_requested_publishers(self) -> None:
+        self.assertEqual(
+            HISTORY_SOURCES,
+            ("chingwin", "kadokawa", "tohan", "spp", "tongli"),
+        )
+
     @patch("app.history_runner.date")
     @patch("app.history_runner.get_backfill_progress")
     def test_selects_newest_unfinished_calendar_year(self, progress, mocked_date) -> None:
