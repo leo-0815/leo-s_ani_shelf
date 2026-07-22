@@ -1,5 +1,14 @@
 # AniShelf
 
+## Local-to-cloud catalog sync
+
+The machine-to-machine API transfers only publisher and book metadata. Personal account data,
+wishlists, followed series, sessions, and notification settings remain cloud-only. The API stays
+disabled until a 32-character-or-longer `ANISHELF_CATALOG_SYNC_TOKEN` is configured on Render.
+
+See [catalog sync API setup](docs/catalog-sync-api.md) for endpoint, token, snapshot, incremental
+cursor, and read-only difference-check instructions.
+
 台灣漫畫與輕小說上市資訊追蹤工具。首版採單機 Web 介面、既有 MySQL 與原生
 HTML/CSS/JavaScript，避免 Node、Redis、Docker、瀏覽器引擎及圖片下載造成容量膨脹。
 

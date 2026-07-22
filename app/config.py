@@ -71,6 +71,7 @@ class Settings:
     db_pool_size: int = 4
     health_cache_seconds: int = 20
     session_touch_minutes: int = 10
+    catalog_sync_token: str = ""
 
     @property
     def database_configured(self) -> bool:
@@ -98,6 +99,11 @@ class Settings:
             and self.github_workflow
             and self.github_ref
         )
+
+    @property
+    def catalog_sync_configured(self) -> bool:
+        """Require enough entropy before exposing the machine-to-machine API."""
+        return len(self.catalog_sync_token) >= 32
 
 
 def get_settings() -> Settings:
@@ -162,4 +168,5 @@ def get_settings() -> Settings:
         db_pool_size=_env_int("ANISHELF_DB_POOL_SIZE", 4, 1, 10),
         health_cache_seconds=_env_int("ANISHELF_HEALTH_CACHE_SECONDS", 20, 1, 60),
         session_touch_minutes=_env_int("ANISHELF_SESSION_TOUCH_MINUTES", 10, 1, 60),
+        catalog_sync_token=os.getenv("ANISHELF_CATALOG_SYNC_TOKEN", "").strip(),
     )

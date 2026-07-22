@@ -28,6 +28,7 @@ from .auth import (
     session_cookie,
 )
 from .config import ROOT, get_settings
+from .catalog_sync import PROTOCOL_VERSION, ingest_catalog_books
 from .crawler import create_job, get_job
 from .db import DatabaseUnavailable, close_connection_pools, ensure_schema, ping
 from .notifications import (
@@ -51,6 +52,10 @@ from .repository import (
     list_recommendations,
     list_series,
     quality_report,
+    catalog_books,
+    catalog_change_feed,
+    catalog_manifest,
+    catalog_sync_status,
     set_series_follow,
     set_wishlist,
     stats,
@@ -157,6 +162,10 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/auth/me":
                 user = current_user(self.headers.get("Cookie"))
                 self._json({"authenticated": bool(user), "user": user})
+                return
+            if parsed.path.startswith("/api/catalog-sync/"):
+                if self._require_catalog_sync():
+                    self._catalog_sync_get(parsed)
                 return
             if parsed.path == "/auth/google":
                 self._start_google_login()
@@ -348,6 +357,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/api/catalog-sync/books":
+                if not self._require_catalog_sync():
+                    return
+                payload = self._body()
+                self._json(
+                    {
+                        "protocol_version": PROTOCOL_VERSION,
+                        **ingest_catalog_books(payload.get("items")),
+                    },
+                    HTTPStatus.ACCEPTED,
+                )
+                return
             user = self._require_user()
             if not user or not self._require_csrf(user):
                 return
@@ -532,6 +553,58 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Invalid CSRF token"}, HTTPStatus.FORBIDDEN)
             return False
         return True
+
+    def _require_catalog_sync(self) -> bool:
+        settings = get_settings()
+        if not settings.catalog_sync_configured:
+            self._json(
+                {"error": "Catalog sync is not configured"},
+                HTTPStatus.SERVICE_UNAVAILABLE,
+            )
+            return False
+        authorization = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        supplied = authorization[len(prefix) :] if authorization.startswith(prefix) else ""
+        if not supplied or not secrets.compare_digest(settings.catalog_sync_token, supplied):
+            self._json({"error": "Invalid catalog sync token"}, HTTPStatus.UNAUTHORIZED)
+            return False
+        return True
+
+    def _catalog_sync_get(self, parsed: Any) -> None:
+        query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+        if parsed.path == "/api/catalog-sync/status":
+            self._json({"protocol_version": PROTOCOL_VERSION, **catalog_sync_status()})
+        elif parsed.path == "/api/catalog-sync/manifest":
+            self._json(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    **catalog_manifest(
+                        int(query.get("after_id", "0")), int(query.get("limit", "500"))
+                    ),
+                }
+            )
+        elif parsed.path == "/api/catalog-sync/books":
+            status = catalog_sync_status()
+            self._json(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "snapshot_change_id": status["latest_change_id"],
+                    **catalog_books(
+                        int(query.get("after_id", "0")), int(query.get("limit", "500"))
+                    ),
+                }
+            )
+        elif parsed.path == "/api/catalog-sync/changes":
+            self._json(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    **catalog_change_feed(
+                        int(query.get("after", "0")), int(query.get("limit", "500"))
+                    ),
+                }
+            )
+        else:
+            self._json({"error": "Catalog sync API not found"}, HTTPStatus.NOT_FOUND)
 
     def _start_google_login(self) -> None:
         location, state = begin_google_login()

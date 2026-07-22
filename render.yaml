@@ -41,3 +41,5 @@ services:
         sync: false
       - key: ANISHELF_ADMIN_EMAILS
         sync: false
+      - key: ANISHELF_CATALOG_SYNC_TOKEN
+        sync: false
