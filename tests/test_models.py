@@ -5,6 +5,8 @@ from datetime import date, timedelta
 
 from app.models import (
     BookRecord,
+    SYNC_HASH_VERSION,
+    catalog_sync_hash,
     detect_edition,
     extract_volume,
     infer_series_title,
@@ -15,6 +17,21 @@ from app.models import (
 
 
 class ModelTests(unittest.TestCase):
+    def test_sync_hash_is_versioned_and_ignores_crawler_bookkeeping(self) -> None:
+        row = {
+            "publisher_code": "kadokawa",
+            "source_key": "1",
+            "title": "Book",
+            "media_type": "novel",
+            "source_url": "https://example.com/1",
+        }
+        first = catalog_sync_hash({**row, "source_hash": "old", "updated_at": "yesterday"})
+        second = catalog_sync_hash({**row, "source_hash": "new", "updated_at": "today"})
+        changed = catalog_sync_hash({**row, "title": "Book revised"})
+        self.assertEqual(SYNC_HASH_VERSION, 1)
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, changed)
+
     def test_normalize_full_width_and_whitespace(self) -> None:
         self.assertEqual(normalize_text("  ＳＰＹ　×  FAMILY  "), "SPY × FAMILY")
 

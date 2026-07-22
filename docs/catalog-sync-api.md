@@ -29,6 +29,11 @@ $bytes = New-Object byte[] 32
 The full snapshot returns `snapshot_change_id`. A client records that value, completes the snapshot,
 then consumes `/changes` after that cursor so edits made during the snapshot are not missed.
 
+Manifest comparisons use `sync_hash` plus `sync_hash_version`, not the crawler's internal
+`source_hash`. Version 1 hashes a fixed canonical set of catalog fields, so adding crawler fields or
+reindexing legacy rows cannot turn the entire catalog into false differences. A future field-set
+change must introduce a new sync hash version before clients switch to it.
+
 Sparse peer records cannot erase an existing non-empty author, ISBN, cover, price, date, or explicit
 rating. A cloud administrator's locked rating always wins. Uploads emit `sync_upload` change events;
 clients must not echo those events back to the same peer.
