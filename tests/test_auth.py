@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import time
 import unittest
+from unittest.mock import MagicMock, patch
 
 from app.auth import (
     AuthenticationError,
     _validate_google_claims,
+    current_user,
     google_redirect_uri,
     oauth_state_cookie,
     session_cookie,
@@ -90,6 +92,35 @@ class AuthTests(unittest.TestCase):
         }
         with self.assertRaises(AuthenticationError):
             _validate_google_claims(claims, "client-id", "expected-nonce")
+
+    @patch("app.auth.transaction")
+    @patch("app.auth.cookie_value", return_value="session-token")
+    @patch("app.auth.get_settings", return_value=settings())
+    def test_session_last_seen_write_is_throttled(
+        self,
+        _get_settings: MagicMock,
+        _cookie_value: MagicMock,
+        transaction: MagicMock,
+    ) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {
+            "id": 1,
+            "email": "owner@example.com",
+            "display_name": "Owner",
+            "avatar_url": None,
+            "role": "admin",
+            "csrf_token": "csrf",
+            "expires_at": None,
+            "should_touch": 0,
+        }
+        connection = transaction.return_value.__enter__.return_value
+        connection.cursor.return_value.__enter__.return_value = cursor
+
+        user = current_user("cookie")
+
+        self.assertTrue(user["is_admin"])
+        self.assertNotIn("should_touch", user)
+        self.assertEqual(cursor.execute.call_count, 1)
 
 
 if __name__ == "__main__":

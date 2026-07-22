@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+from queue import Empty, Full, LifoQueue
+from threading import Lock
+from time import monotonic
 from typing import Any, Iterator
 
 from .config import ROOT, Settings, get_settings
@@ -9,6 +12,85 @@ from .config import ROOT, Settings, get_settings
 
 class DatabaseUnavailable(RuntimeError):
     pass
+
+
+class _ConnectionPool:
+    """A small, lazy pool suited to one Render process and a remote TiDB endpoint."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.max_size = settings.db_pool_size
+        self.available: LifoQueue[tuple[Any, float]] = LifoQueue(maxsize=self.max_size)
+        self.lock = Lock()
+        self.created = 0
+
+    def acquire(self) -> Any:
+        while True:
+            try:
+                connection, returned_at = self.available.get_nowait()
+            except Empty:
+                connection = None
+            if connection is not None:
+                try:
+                    if monotonic() - returned_at >= 30:
+                        connection.ping(reconnect=True)
+                    return connection
+                except Exception:
+                    self._discard(connection)
+                    continue
+
+            with self.lock:
+                if self.created < self.max_size:
+                    self.created += 1
+                    create = True
+                else:
+                    create = False
+            if create:
+                try:
+                    return connect(self.settings)
+                except Exception:
+                    with self.lock:
+                        self.created -= 1
+                    raise
+            try:
+                connection, returned_at = self.available.get(timeout=5)
+            except Empty as exc:
+                raise DatabaseUnavailable("Database connection pool is busy") from exc
+            try:
+                if monotonic() - returned_at >= 30:
+                    connection.ping(reconnect=True)
+                return connection
+            except Exception:
+                self._discard(connection)
+
+    def release(self, connection: Any, *, broken: bool = False) -> None:
+        if broken:
+            self._discard(connection)
+            return
+        try:
+            self.available.put_nowait((connection, monotonic()))
+        except Full:
+            self._discard(connection)
+
+    def _discard(self, connection: Any) -> None:
+        try:
+            connection.close()
+        except Exception:
+            pass
+        with self.lock:
+            self.created = max(0, self.created - 1)
+
+    def close(self) -> None:
+        while True:
+            try:
+                connection, _returned_at = self.available.get_nowait()
+            except Empty:
+                break
+            self._discard(connection)
+
+
+_POOLS: dict[tuple[Any, ...], _ConnectionPool] = {}
+_POOLS_LOCK = Lock()
 
 
 def _driver():
@@ -55,17 +137,63 @@ def connect(settings: Settings | None = None, include_database: bool = True):
     return pymysql.connect(**kwargs)
 
 
+def _pool_key(settings: Settings) -> tuple[Any, ...]:
+    return (
+        settings.db_host,
+        settings.db_port,
+        settings.db_name,
+        settings.db_user,
+        settings.db_password,
+        settings.db_ssl_mode,
+        settings.db_pool_size,
+    )
+
+
+def _pool(settings: Settings) -> _ConnectionPool:
+    key = _pool_key(settings)
+    with _POOLS_LOCK:
+        pool = _POOLS.get(key)
+        if pool is None:
+            pool = _ConnectionPool(settings)
+            _POOLS[key] = pool
+        return pool
+
+
+def close_connection_pools() -> None:
+    """Close idle connections, primarily for clean shutdowns and tests."""
+    with _POOLS_LOCK:
+        pools = list(_POOLS.values())
+        _POOLS.clear()
+    for pool in pools:
+        pool.close()
+
+
 @contextmanager
 def transaction() -> Iterator[Any]:
-    connection = connect()
+    settings = get_settings()
+    pool = _pool(settings)
+    connection = pool.acquire()
+    broken = False
     try:
         yield connection
-        connection.commit()
     except Exception:
-        connection.rollback()
+        try:
+            connection.rollback()
+        except Exception:
+            broken = True
         raise
+    else:
+        try:
+            connection.commit()
+        except Exception:
+            broken = True
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            raise
     finally:
-        connection.close()
+        pool.release(connection, broken=broken)
 
 
 def ensure_schema() -> None:

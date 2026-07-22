@@ -3,13 +3,53 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.server import Handler, _instance_lock_path
+from app.server import Handler, _clear_health_cache, _database_health, _instance_lock_path
 
 
 class ServerInstanceTests(unittest.TestCase):
     def test_instance_lock_is_scoped_to_port(self) -> None:
         self.assertEqual(_instance_lock_path(8765).name, ".anishelf.8765.lock")
         self.assertNotEqual(_instance_lock_path(8765), _instance_lock_path(8877))
+
+    @patch("app.server.ping", return_value={"version": "TiDB", "database_name": "anishelf"})
+    def test_database_health_reuses_short_cache(self, ping: MagicMock) -> None:
+        settings = MagicMock(
+            db_host="db.example.com",
+            db_port=4000,
+            db_name="anishelf",
+            db_user="anishelf",
+            health_cache_seconds=20,
+        )
+        _clear_health_cache()
+
+        first = _database_health(settings)
+        second = _database_health(settings)
+
+        self.assertEqual(first, second)
+        self.assertTrue(first[0])
+        ping.assert_called_once_with()
+
+    def test_database_health_retries_failure_after_short_ttl(self) -> None:
+        settings = MagicMock(
+            db_host="db.example.com",
+            db_port=4000,
+            db_name="anishelf",
+            db_user="anishelf",
+            health_cache_seconds=20,
+        )
+        _clear_health_cache()
+        with patch("app.server.monotonic", side_effect=[0, 1, 3]), patch(
+            "app.server.ping",
+            side_effect=[OSError("temporary outage"), {"version": "TiDB"}],
+        ) as ping:
+            first = _database_health(settings)
+            cached = _database_health(settings)
+            recovered = _database_health(settings)
+
+        self.assertFalse(first[0])
+        self.assertEqual(first, cached)
+        self.assertTrue(recovered[0])
+        self.assertEqual(ping.call_count, 2)
 
 
 class ServerAuthorizationTests(unittest.TestCase):

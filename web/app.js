@@ -118,28 +118,22 @@ const issueLabels = {missing_author: "缺作者", missing_isbn: "缺 ISBN", miss
 const priorityLabels = ["一般", "稍高", "優先", "必買"];
 const formatLabels = {paper: "紙本", digital: "電子書", both: "紙本＋電子"};
 
-async function checkHealth() {
+async function loadAll() {
+  if (!await loadSession()) return;
   try {
-    const health = await api("/api/health");
+    await Promise.all([loadPublishers(), loadStats(), loadBooks()]);
     $("#healthDot").className = "health-dot ok";
-    $("#healthText").textContent = `MySQL ${health.version}`;
+    $("#healthText").textContent = "TiDB 已連接";
     $("#setupBanner").classList.add("hidden");
+    if (state.user.is_admin) await loadLatestJob();
     return true;
   } catch (error) {
     $("#healthDot").className = "health-dot bad";
-    $("#healthText").textContent = "需要初始化";
+    $("#healthText").textContent = "資料庫未連線";
     $("#setupMessage").textContent = error.message;
     $("#setupBanner").classList.remove("hidden");
-    return false;
+    throw error;
   }
-}
-
-async function loadAll() {
-  if (!await loadSession()) return;
-  if (!await checkHealth()) return;
-  await Promise.all([loadPublishers(), loadStats(), loadBooks()]);
-  if (state.user.is_admin) await loadLatestJob();
-  return true;
 }
 
 async function loadStats() {

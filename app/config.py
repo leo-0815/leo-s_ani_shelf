@@ -15,6 +15,14 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return min(max(value, minimum), maximum)
+
+
 def load_dotenv(path: Path | None = None) -> None:
     """Load a tiny .env file without pulling in another dependency."""
     env_path = path or ROOT / ".env"
@@ -60,6 +68,9 @@ class Settings:
     github_repository: str = ""
     github_workflow: str = "scheduled-update.yml"
     github_ref: str = "cloud/deployment"
+    db_pool_size: int = 4
+    health_cache_seconds: int = 20
+    session_touch_minutes: int = 10
 
     @property
     def database_configured(self) -> bool:
@@ -148,4 +159,7 @@ def get_settings() -> Settings:
             "ANISHELF_GITHUB_WORKFLOW", "scheduled-update.yml"
         ).strip(),
         github_ref=os.getenv("ANISHELF_GITHUB_REF", "cloud/deployment").strip(),
+        db_pool_size=_env_int("ANISHELF_DB_POOL_SIZE", 4, 1, 10),
+        health_cache_seconds=_env_int("ANISHELF_HEALTH_CACHE_SECONDS", 20, 1, 60),
+        session_touch_minutes=_env_int("ANISHELF_SESSION_TOUCH_MINUTES", 10, 1, 60),
     )

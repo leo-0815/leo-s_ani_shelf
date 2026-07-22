@@ -17,6 +17,12 @@ services:
         value: 0.0.0.0
       - key: ANISHELF_DB_SSL_MODE
         value: verify_identity
+      - key: ANISHELF_DB_POOL_SIZE
+        value: "4"
+      - key: ANISHELF_HEALTH_CACHE_SECONDS
+        value: "20"
+      - key: ANISHELF_SESSION_TOUCH_MINUTES
+        value: "10"
       - key: ANISHELF_DB_HOST
         sync: false
       - key: ANISHELF_DB_PORT
