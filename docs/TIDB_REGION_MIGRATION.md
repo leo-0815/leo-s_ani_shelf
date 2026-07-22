@@ -16,10 +16,14 @@
 在雲端工作樹執行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File ".\scripts\migrate_tidb_region.ps1" `
-  -TargetHost "<新加坡 TiDB host>" `
-  -TargetUser "<新加坡 TiDB user>"
+powershell -ExecutionPolicy Bypass -File ".\scripts\migrate_tidb_region.ps1"
 ```
+
+目前腳本已固定使用：
+
+- 東京：`gateway01.ap-northeast-1.prod.aws.tidbcloud.com`
+- 新加坡：`gateway01.ap-southeast-1.prod.aws.tidbcloud.com`
+- 新加坡帳號：`2FrVdZi8Y4v7iZr.root`
 
 兩次密碼輸入不會顯示在畫面上。預演不得建立 schema 或寫入資料。
 
@@ -33,11 +37,9 @@ powershell -ExecutionPolicy Bypass -File ".\scripts\migrate_tidb_region.ps1" `
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File ".\scripts\migrate_tidb_region.ps1" `
-  -TargetHost "<新加坡 TiDB host>" `
-  -TargetUser "<新加坡 TiDB user>" `
   -Execute `
   -ResetTarget `
-  -ConfirmTarget "<新加坡 TiDB host>"
+  -ConfirmTarget "gateway01.ap-southeast-1.prod.aws.tidbcloud.com"
 ```
 
 只有在所有資料表均顯示 `OK` 後，才能更新 Render 與 GitHub Actions 的資料庫連線設定。

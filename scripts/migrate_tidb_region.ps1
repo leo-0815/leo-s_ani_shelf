@@ -3,11 +3,9 @@ param(
 
     [string]$SourceUser = "33VTXrQyXYai4sB.root",
 
-    [Parameter(Mandatory = $true)]
-    [string]$TargetHost,
+    [string]$TargetHost = "gateway01.ap-southeast-1.prod.aws.tidbcloud.com",
 
-    [Parameter(Mandatory = $true)]
-    [string]$TargetUser,
+    [string]$TargetUser = "2FrVdZi8Y4v7iZr.root",
 
     [string]$SourceDatabase = "anishelf",
     [string]$TargetDatabase = "anishelf",
