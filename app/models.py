@@ -9,6 +9,45 @@ from datetime import date
 from typing import Any
 
 
+CONTENT_RATINGS = frozenset(
+    {"unknown", "general", "protected_6", "guidance_12", "guidance_15", "restricted_18"}
+)
+
+
+def normalize_content_rating(value: str | None) -> str:
+    """Normalize explicit publisher labels without guessing from a book title."""
+    normalized = normalize_text(value or "").casefold().replace(" ", "")
+    if not normalized or normalized == "unknown":
+        return "unknown"
+    aliases = {
+        "general": "general",
+        "普遍級": "general",
+        "普級": "general",
+        "全年齡": "general",
+        "protected_6": "protected_6",
+        "保護級": "protected_6",
+        "6+": "protected_6",
+        "guidance_12": "guidance_12",
+        "輔12級": "guidance_12",
+        "12+": "guidance_12",
+        "guidance_15": "guidance_15",
+        "輔15級": "guidance_15",
+        "15+": "guidance_15",
+        "restricted_18": "restricted_18",
+        "限制級": "restricted_18",
+        "18禁": "restricted_18",
+        "r18": "restricted_18",
+        "r-18": "restricted_18",
+        "18+": "restricted_18",
+        "未滿18歲不得購買": "restricted_18",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    if any(label in normalized for label in ("限制級", "18禁", "未滿18歲", "成人限定")):
+        return "restricted_18"
+    return value if value in CONTENT_RATINGS else "unknown"
+
+
 EDITION_MARKERS = (
     ("豪華限定版", "deluxe"),
     ("首刷限定版", "first_print"),
@@ -105,12 +144,29 @@ class BookRecord:
     edition_type: str = "standard"
     volume_label: str | None = None
     series_title: str | None = None
+    content_rating: str = "unknown"
+    rating_raw: str | None = None
+    rating_source: str = "unknown"
+    rating_confidence: int = 0
 
     def prepared(self) -> dict[str, Any]:
         data = asdict(self)
         data["title"] = normalize_text(self.title)
         data["normalized_title"] = normalize_text(self.title).casefold()
         data["author"] = normalize_text(self.author or "") or None
+        rating_candidate = self.content_rating
+        if rating_candidate == "unknown" and self.rating_raw:
+            rating_candidate = self.rating_raw
+        data["content_rating"] = normalize_content_rating(rating_candidate)
+        data["rating_raw"] = normalize_text(self.rating_raw or "")[:100] or None
+        data["rating_confidence"] = min(max(int(self.rating_confidence or 0), 0), 100)
+        if data["content_rating"] != "unknown" and data["rating_raw"]:
+            if self.rating_source == "unknown":
+                data["rating_source"] = "publisher"
+            if data["rating_confidence"] == 0:
+                data["rating_confidence"] = 100
+        if data["rating_source"] not in {"unknown", "publisher", "category", "heuristic", "manual"}:
+            data["rating_source"] = "unknown"
         data["edition_type"] = self.edition_type or detect_edition(self.title)
         data["volume_label"] = self.volume_label or extract_volume(self.title)
         data["series_title"] = self.series_title or infer_series_title(self.title)

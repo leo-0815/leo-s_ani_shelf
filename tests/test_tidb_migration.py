@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from app.tidb_migration import (
     Endpoint,
     MigrationError,
+    TABLE_ORDER,
     TableResult,
     _ensure_distinct,
     _identifier,
@@ -89,6 +90,11 @@ class TiDBMigrationTests(unittest.TestCase):
         self.assertTrue(TableResult("books", 10, 10, "abc", "abc").matches)
         self.assertFalse(TableResult("books", 10, 9, "abc", "abc").matches)
         self.assertFalse(TableResult("books", 10, 10, "abc", "def").matches)
+
+    def test_catalog_sync_tables_are_migrated_after_books(self) -> None:
+        self.assertIn("catalog_changes", TABLE_ORDER)
+        self.assertIn("catalog_sync_state", TABLE_ORDER)
+        self.assertGreater(TABLE_ORDER.index("catalog_changes"), TABLE_ORDER.index("books"))
 
 
 if __name__ == "__main__":

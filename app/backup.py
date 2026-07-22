@@ -62,6 +62,10 @@ def _record_from_export(item: dict[str, Any]) -> BookRecord:
         edition_type=str(item.get("edition_type") or "standard"),
         volume_label=item.get("volume_label"),
         series_title=item.get("series_title"),
+        content_rating=str(item.get("content_rating") or "unknown"),
+        rating_raw=item.get("rating_raw"),
+        rating_source=str(item.get("rating_source") or "unknown"),
+        rating_confidence=int(item.get("rating_confidence") or 0),
     )
 
 

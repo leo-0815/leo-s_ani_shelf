@@ -4,7 +4,15 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from .db import transaction
-from .models import BookRecord, detect_edition, extract_volume, infer_series_title, normalize_text
+from .models import (
+    CONTENT_RATINGS,
+    BookRecord,
+    detect_edition,
+    extract_volume,
+    infer_series_title,
+    normalize_content_rating,
+    normalize_text,
+)
 
 
 BOOK_FIELDS = (
@@ -14,6 +22,10 @@ BOOK_FIELDS = (
     "volume_label",
     "edition_type",
     "media_type",
+    "content_rating",
+    "rating_raw",
+    "rating_source",
+    "rating_confidence",
     "author",
     "isbn",
     "cover_url",
@@ -25,6 +37,8 @@ BOOK_FIELDS = (
     "source_hash",
 )
 HISTORY_FIELDS = ("title", "release_date", "release_precision", "release_status")
+RATING_FIELDS = ("content_rating", "rating_raw", "rating_source", "rating_confidence")
+CHANGE_ORIGINS = {"crawler", "cloud_pull", "sync_upload", "manual"}
 
 
 def serialize_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -48,7 +62,9 @@ def get_publisher_id(connection: Any, code: str) -> int:
     return int(row["id"])
 
 
-def upsert_book(record: BookRecord) -> str:
+def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
+    if change_origin not in CHANGE_ORIGINS:
+        raise ValueError("無效的書目異動來源")
     data = record.prepared()
     with transaction() as connection:
         publisher_id = get_publisher_id(connection, record.publisher_code)
@@ -95,6 +111,14 @@ def upsert_book(record: BookRecord) -> str:
                         "WHERE publisher_id = %s AND normalized_series = %s",
                         (book_id, publisher_id, normalized_series),
                     )
+                _record_catalog_change(
+                    cursor,
+                    book_id,
+                    "inserted",
+                    data["source_hash"],
+                    change_origin,
+                    ("*",),
+                )
                 return "inserted"
 
             if existing["source_hash"] == data["source_hash"]:
@@ -104,9 +128,10 @@ def upsert_book(record: BookRecord) -> str:
                 )
                 return "unchanged"
 
+            write_data = _crawler_write_data(existing, data)
             for field in HISTORY_FIELDS:
                 old = existing.get(field)
-                new = data.get(field)
+                new = write_data.get(field)
                 if old != new:
                     cursor.execute(
                         "INSERT INTO release_history (book_id, field_name, old_value, new_value) "
@@ -118,16 +143,112 @@ def upsert_book(record: BookRecord) -> str:
                 assignments = f"source_key = %s, {assignments}"
                 values = [
                     record.source_key,
-                    *[data[field] for field in BOOK_FIELDS],
+                    *[write_data[field] for field in BOOK_FIELDS],
                     existing["id"],
                 ]
             else:
-                values = [*[data[field] for field in BOOK_FIELDS], existing["id"]]
+                values = [*[write_data[field] for field in BOOK_FIELDS], existing["id"]]
             cursor.execute(
                 f"UPDATE books SET {assignments}, last_seen_at = CURRENT_TIMESTAMP WHERE id = %s",
                 values,
             )
+            changed_fields = [
+                field for field in BOOK_FIELDS if existing.get(field) != write_data.get(field)
+            ]
+            if migrate_source_key:
+                changed_fields.insert(0, "source_key")
+            _record_catalog_change(
+                cursor,
+                int(existing["id"]),
+                "updated",
+                write_data["source_hash"],
+                change_origin,
+                changed_fields,
+            )
             return "updated"
+
+
+def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """Keep an administrator's rating while still accepting fresh publisher metadata."""
+    result = dict(data)
+    if existing.get("rating_locked"):
+        for field in RATING_FIELDS:
+            result[field] = existing.get(field)
+    return result
+
+
+def _record_catalog_change(
+    cursor: Any,
+    book_id: int,
+    change_type: str,
+    source_hash: str,
+    change_origin: str,
+    changed_fields: list[str] | tuple[str, ...],
+) -> None:
+    cursor.execute(
+        "INSERT INTO catalog_changes "
+        "(book_id, change_type, change_origin, source_hash, changed_fields) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (
+            book_id,
+            change_type,
+            change_origin,
+            source_hash,
+            ",".join(changed_fields)[:500] or "*",
+        ),
+    )
+
+
+def set_book_rating(
+    book_id: int,
+    content_rating: str,
+    *,
+    raw_label: str = "",
+    locked: bool = True,
+) -> bool:
+    """Set an administrator rating and emit the same change feed used by sync."""
+    normalized = normalize_content_rating(content_rating)
+    if content_rating not in CONTENT_RATINGS or normalized != content_rating:
+        raise ValueError("無效的內容分級")
+    raw_value = normalize_text(raw_label)[:100] or None
+    confidence = 0 if normalized == "unknown" else 100
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, source_hash, content_rating, rating_raw, rating_source, "
+                "rating_confidence, rating_locked FROM books WHERE id = %s FOR UPDATE",
+                (book_id,),
+            )
+            existing = cursor.fetchone()
+            if not existing:
+                raise KeyError("找不到書籍")
+            desired = {
+                "content_rating": normalized,
+                "rating_raw": raw_value,
+                "rating_source": "manual",
+                "rating_confidence": confidence,
+                "rating_locked": bool(locked),
+            }
+            changed_fields = [
+                field for field, value in desired.items() if existing.get(field) != value
+            ]
+            if not changed_fields:
+                return False
+            cursor.execute(
+                "UPDATE books SET content_rating = %s, rating_raw = %s, "
+                "rating_source = 'manual', rating_confidence = %s, rating_locked = %s "
+                "WHERE id = %s",
+                (normalized, raw_value, confidence, bool(locked), book_id),
+            )
+            _record_catalog_change(
+                cursor,
+                book_id,
+                "rating",
+                str(existing["source_hash"]),
+                "manual",
+                changed_fields,
+            )
+    return True
 
 
 def _as_text(value: Any) -> str | None:

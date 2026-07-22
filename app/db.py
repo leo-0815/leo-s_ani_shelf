@@ -214,6 +214,37 @@ def ensure_schema() -> None:
                 "VARCHAR(20) NOT NULL DEFAULT 'paper'",
             )
             _ensure_column(cursor, "crawl_jobs", "skipped_count", "INT UNSIGNED NOT NULL DEFAULT 0")
+            _ensure_column(
+                cursor,
+                "books",
+                "content_rating",
+                "VARCHAR(30) NOT NULL DEFAULT 'unknown' AFTER media_type",
+            )
+            _ensure_column(cursor, "books", "rating_raw", "VARCHAR(100) NULL AFTER content_rating")
+            _ensure_column(
+                cursor,
+                "books",
+                "rating_source",
+                "VARCHAR(30) NOT NULL DEFAULT 'unknown' AFTER rating_raw",
+            )
+            _ensure_column(
+                cursor,
+                "books",
+                "rating_confidence",
+                "TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER rating_source",
+            )
+            _ensure_column(
+                cursor,
+                "books",
+                "rating_locked",
+                "BOOLEAN NOT NULL DEFAULT FALSE AFTER rating_confidence",
+            )
+            _ensure_index(
+                cursor,
+                "books",
+                "idx_books_rating",
+                "(`content_rating`, `rating_locked`)",
+            )
 
 
 def _ensure_column(cursor: Any, table: str, column: str, definition: str) -> None:
@@ -224,6 +255,16 @@ def _ensure_column(cursor: Any, table: str, column: str, definition: str) -> Non
     )
     if not cursor.fetchone()["present"]:
         cursor.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+
+
+def _ensure_index(cursor: Any, table: str, index: str, columns: str) -> None:
+    cursor.execute(
+        "SELECT COUNT(*) AS present FROM information_schema.statistics "
+        "WHERE table_schema = DATABASE() AND table_name = %s AND index_name = %s",
+        (table, index),
+    )
+    if not cursor.fetchone()["present"]:
+        cursor.execute(f"ALTER TABLE `{table}` ADD INDEX `{index}` {columns}")
 
 
 def ping() -> dict[str, Any]:

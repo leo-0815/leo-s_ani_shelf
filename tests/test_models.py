@@ -9,6 +9,7 @@ from app.models import (
     extract_volume,
     infer_series_title,
     infer_status,
+    normalize_content_rating,
     normalize_text,
 )
 
@@ -61,6 +62,24 @@ class ModelTests(unittest.TestCase):
             source_url="https://example.test/1",
         )
         self.assertEqual(record.prepared()["source_hash"], record.prepared()["source_hash"])
+
+    def test_explicit_publisher_rating_is_normalized(self) -> None:
+        record = BookRecord(
+            publisher_code="demo",
+            source_key="adult-1",
+            title="作品",
+            media_type="manga",
+            source_url="https://example.test/adult-1",
+            rating_raw="限制級",
+        )
+        prepared = record.prepared()
+        self.assertEqual(prepared["content_rating"], "restricted_18")
+        self.assertEqual(prepared["rating_source"], "publisher")
+        self.assertEqual(prepared["rating_confidence"], 100)
+
+    def test_rating_normalizer_does_not_guess_from_unrecognized_text(self) -> None:
+        self.assertEqual(normalize_content_rating("戀愛喜劇"), "unknown")
+        self.assertEqual(normalize_content_rating("未滿18歲不得購買"), "restricted_18")
 
 
 if __name__ == "__main__":

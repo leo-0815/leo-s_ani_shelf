@@ -23,6 +23,8 @@ TABLE_ORDER = (
     "publishers",
     "users",
     "books",
+    "catalog_changes",
+    "catalog_sync_state",
     "user_sessions",
     "oauth_login_states",
     "crawl_jobs",

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from app.config import Settings
-from app.db import DatabaseUnavailable, close_connection_pools, connect, transaction
+from app.db import DatabaseUnavailable, _ensure_index, close_connection_pools, connect, transaction
 
 
 class _FakePyMySQL:
@@ -89,6 +89,29 @@ class DatabaseTlsTests(unittest.TestCase):
         with patch("app.db._driver", return_value=(driver, dict)):
             with self.assertRaises(DatabaseUnavailable):
                 connect(_settings("mystery"))
+
+
+class DatabaseMigrationTests(unittest.TestCase):
+    def test_missing_index_is_added_once(self) -> None:
+        cursor = unittest.mock.MagicMock()
+        cursor.fetchone.return_value = {"present": 0}
+
+        _ensure_index(cursor, "books", "idx_books_rating", "(`content_rating`)")
+
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertIn("information_schema.statistics", cursor.execute.call_args_list[0].args[0])
+        self.assertEqual(
+            cursor.execute.call_args_list[1].args[0],
+            "ALTER TABLE `books` ADD INDEX `idx_books_rating` (`content_rating`)",
+        )
+
+    def test_existing_index_is_not_recreated(self) -> None:
+        cursor = unittest.mock.MagicMock()
+        cursor.fetchone.return_value = {"present": 1}
+
+        _ensure_index(cursor, "books", "idx_books_rating", "(`content_rating`)")
+
+        cursor.execute.assert_called_once()
 
 
 class DatabasePoolTests(unittest.TestCase):

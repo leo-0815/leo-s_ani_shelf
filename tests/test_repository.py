@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock, patch
 
-from app.repository import merge_recommendation_rows, search_terms
+from app.repository import (
+    _crawler_write_data,
+    merge_recommendation_rows,
+    search_terms,
+    set_book_rating,
+)
 
 
 class RepositorySearchTests(unittest.TestCase):
@@ -68,6 +74,66 @@ class RepositorySearchTests(unittest.TestCase):
         self.assertEqual(items[0]["recommendation_types"], ["followed_series"])
         self.assertIn("追蹤了", items[0]["recommendation_reason"])
         self.assertGreater(items[0]["recommendation_score"], 95)
+
+    def test_locked_manual_rating_survives_crawler_updates(self) -> None:
+        existing = {
+            "rating_locked": True,
+            "content_rating": "restricted_18",
+            "rating_raw": "管理員確認",
+            "rating_source": "manual",
+            "rating_confidence": 100,
+        }
+        incoming = {
+            "content_rating": "general",
+            "rating_raw": "普遍級",
+            "rating_source": "publisher",
+            "rating_confidence": 100,
+            "title": "更新後書名",
+        }
+        merged = _crawler_write_data(existing, incoming)
+        self.assertEqual(merged["content_rating"], "restricted_18")
+        self.assertEqual(merged["rating_source"], "manual")
+        self.assertEqual(merged["title"], "更新後書名")
+
+    def test_unlocked_rating_accepts_publisher_update(self) -> None:
+        incoming = {
+            "content_rating": "restricted_18",
+            "rating_source": "publisher",
+        }
+        self.assertEqual(
+            _crawler_write_data({"rating_locked": False}, incoming),
+            incoming,
+        )
+
+    def test_manual_rating_emits_catalog_change(self) -> None:
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = {
+            "id": 8,
+            "source_hash": "a" * 64,
+            "content_rating": "unknown",
+            "rating_raw": None,
+            "rating_source": "unknown",
+            "rating_confidence": 0,
+            "rating_locked": False,
+        }
+        manager = MagicMock()
+        manager.__enter__.return_value = connection
+        with patch("app.repository.transaction", return_value=manager):
+            changed = set_book_rating(
+                8,
+                "restricted_18",
+                raw_label="管理員確認",
+            )
+
+        self.assertTrue(changed)
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertTrue(any("UPDATE books SET content_rating" in sql for sql in statements))
+        self.assertTrue(any("INSERT INTO catalog_changes" in sql for sql in statements))
+
+    def test_manual_rating_rejects_unknown_values(self) -> None:
+        with self.assertRaises(ValueError):
+            set_book_rating(8, "adult")
 
 
 if __name__ == "__main__":
