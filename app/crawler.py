@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import traceback
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -31,6 +32,7 @@ SOURCES = {
     "spp": SppSource,
     "egmanga": EgMangaSource,
 }
+HISTORY_SOURCES = ("chingwin", "spp", "tongli")
 _job_lock = threading.Lock()
 
 
@@ -76,9 +78,11 @@ def _updated_recently(source_code: str, hours: int) -> bool:
     return bool(row and row["finished_at"] and row["finished_at"] >= threshold)
 
 
-def run_backfill(source_code: str = "all") -> int:
+def run_backfill(
+    source_code: str = "all", *, deadline_monotonic: float | None = None
+) -> int:
     """Run the one-time historical fill in the foreground so it cannot die with a CLI process."""
-    if source_code != "all" and source_code not in SOURCES:
+    if source_code not in {"all", "history"} and source_code not in SOURCES:
         raise ValueError("尚未支援此出版社")
     with transaction() as connection:
         with connection.cursor() as cursor:
@@ -87,7 +91,7 @@ def run_backfill(source_code: str = "all") -> int:
                 (f"backfill:{source_code}",),
             )
             job_id = int(cursor.lastrowid)
-    _run_job(job_id, source_code, "backfill")
+    _run_job(job_id, source_code, "backfill", deadline_monotonic=deadline_monotonic)
     return job_id
 
 
@@ -106,7 +110,13 @@ def run_incremental(source_code: str = "all") -> int:
     return job_id
 
 
-def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
+def _run_job(
+    job_id: int,
+    source_code: str,
+    mode: str = "incremental",
+    *,
+    deadline_monotonic: float | None = None,
+) -> None:
     if not _job_lock.acquire(blocking=False):
         _finish_job(job_id, "failed", message="已有另一個更新工作正在執行")
         return
@@ -114,7 +124,14 @@ def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
     messages: list[str] = []
     try:
         _start_job(job_id)
-        codes = list(SOURCES) if source_code == "all" else [source_code]
+        codes = (
+            list(HISTORY_SOURCES)
+            if source_code == "history"
+            else list(SOURCES)
+            if source_code == "all"
+            else [source_code]
+        )
+        paused = False
         for code in codes:
             source = SOURCES[code]()
             try:
@@ -153,6 +170,10 @@ def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
                             )
                         source.commit_batch(checkpoint)
                         _update_job_progress(job_id, totals)
+                        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                            paused = True
+                            messages.append("Time limit reached after a committed checkpoint.")
+                            break
                 else:
                     records = source.collect(
                         known_keys=known_keys,
@@ -171,7 +192,9 @@ def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
                         f"{source.name} 下載失敗：{message}"
                         for message in getattr(source, "errors", [])[-10:]
                     )
-                if source_errors:
+                if paused:
+                    _mark_source(code, None)
+                elif source_errors:
                     _mark_source(code, f"有 {source_errors} 筆資料寫入失敗")
                 elif fetch_errors:
                     _mark_source(code, f"有 {fetch_errors} 個商品頁下載失敗")
@@ -188,6 +211,8 @@ def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
                         f"大型回填：{source.name} 完成，發現 {source_discovered} 筆新資料",
                         flush=True,
                     )
+                if paused:
+                    break
             except Exception as exc:
                 totals["errors"] += 1
                 message = f"{source.name}：{exc}"
@@ -195,8 +220,22 @@ def _run_job(job_id: int, source_code: str, mode: str = "incremental") -> None:
                 _mark_source(code, message)
                 if mode == "backfill":
                     print(f"大型回填：{message}", flush=True)
-        status = "completed" if totals["errors"] == 0 else "partial"
+        status = (
+            "paused"
+            if paused
+            else "completed"
+            if totals["errors"] == 0
+            else "partial"
+        )
         _finish_job(job_id, status, totals, "\n".join(messages[-10:]))
+    except KeyboardInterrupt:
+        _finish_job(
+            job_id,
+            "paused",
+            totals,
+            "Stopped manually; resume from the last committed checkpoint.",
+        )
+        raise
     except Exception as exc:
         _finish_job(job_id, "failed", totals, f"{exc}\n{traceback.format_exc(limit=3)}")
     finally:

@@ -11,7 +11,8 @@ from ..models import BookRecord, detect_edition, extract_volume, infer_series_ti
 from .common import (
     RateLimiter,
     fetch_html,
-    one_year_cutoff,
+    history_cutoff,
+    history_segment,
     parse_page,
     parse_tables,
     polite_pause,
@@ -29,7 +30,6 @@ class TongLiSource:
     sitemap_url = "https://www.tongli.com.tw/SitemapBooks.aspx"
     schedule_url = "https://www.tongli.com.tw/Search1.aspx?Page=1"
     schedule_pages = 3
-    checkpoint_segment = "one_year_v1_catalog"
     batch_size = 40
     workers = 3
     requests_per_second = 2.5
@@ -148,15 +148,16 @@ class TongLiSource:
     ) -> Iterator[tuple[list[BookRecord], dict[str, Any]]]:
         from ..repository import get_backfill_progress
 
-        progress = get_backfill_progress(self.code).get(self.checkpoint_segment, {})
+        checkpoint_segment = history_segment("catalog")
+        progress = get_backfill_progress(self.code).get(checkpoint_segment, {})
         if progress.get("completed"):
             print("東立大型回填：一年商品區段已完成", flush=True)
             return
         markup = fetch_html(self.sitemap_url, timeout=40, attempts=3)
         urls = re.findall(r"<loc>\s*(.*?)\s*</loc>", markup, re.I)
         self.latest_cursor = urls[0] if urls else None
-        start = int(progress.get("next_page", 0))
-        cutoff = one_year_cutoff()
+        start = max(0, int(progress.get("next_page", 0)) - self.batch_size)
+        cutoff = history_cutoff()
         consecutive_old_batches = 0
         for offset in range(start, len(urls), self.batch_size):
             page_urls = urls[offset : offset + self.batch_size]
@@ -190,7 +191,7 @@ class TongLiSource:
                 flush=True,
             )
             yield records, {
-                "segment": self.checkpoint_segment,
+                "segment": checkpoint_segment,
                 "next_page": next_offset,
                 "completed": completed,
                 "error_count": error_count,

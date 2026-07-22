@@ -54,6 +54,48 @@ def main() -> None:
         source_code = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
         job_id = run_incremental(source_code)
         print(f"增量更新完成（工作 #{job_id}）")
+    elif command == "catalog-sync":
+        from app.catalog_sync import CatalogSyncClient
+        from app.db import ensure_schema
+
+        ensure_schema()
+        action = sys.argv[2].lower() if len(sys.argv) > 2 else "compare"
+        client = CatalogSyncClient()
+        if action == "compare":
+            result = client.compare()
+            result = {
+                "same": result["same"],
+                "local_only": len(result["local_only"]),
+                "remote_only": len(result["remote_only"]),
+                "different": len(result["different"]),
+                "examples": {
+                    "local_only": result["local_only"][:20],
+                    "remote_only": result["remote_only"][:20],
+                    "different": result["different"][:20],
+                },
+            }
+        elif action == "pull":
+            result = client.pull()
+        elif action == "push":
+            result = client.push()
+        elif action == "reconcile":
+            result = {
+                "pull": client.pull(),
+                "manifest": client.push_manifest_differences(),
+                "changes": client.push(),
+            }
+        else:
+            raise SystemExit(
+                "Usage: python anishelf.py catalog-sync [compare|pull|push|reconcile]"
+            )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif command == "history":
+        from app.db import ensure_schema
+        from app.history_runner import run_history_session
+
+        ensure_schema()
+        mode = sys.argv[2].lower() if len(sys.argv) > 2 else "30m"
+        run_history_session(mode)
     elif command == "status":
         from app.db import ensure_schema, transaction
         from app.repository import stats
@@ -125,7 +167,7 @@ def main() -> None:
     else:
         raise SystemExit(
             "用法：python anishelf.py "
-            "[install|setup|run|backfill|update|status|migrate|reindex|export|restore]"
+            "[install|setup|run|backfill|update|catalog-sync|history|status|migrate|reindex|export|restore]"
         )
 
 

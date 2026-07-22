@@ -10,7 +10,7 @@ from typing import Any, Iterator
 from urllib.parse import urljoin
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
-from .common import fetch_html, one_year_cutoff, parse_page, polite_pause, unique
+from .common import fetch_html, history_cutoff, history_segment, parse_page, polite_pause, unique
 
 
 class ChingWinSource:
@@ -24,7 +24,6 @@ class ChingWinSource:
     max_articles = 6
     incremental_catalog_pages = 3
     page_size = 24
-    checkpoint_version = "one_year_v1"
     latest_cursor: str | None = None
 
     def __init__(self) -> None:
@@ -62,14 +61,16 @@ class ChingWinSource:
                 yield schedule_records, None
 
         progress = get_backfill_progress(self.code) if backfill else {}
-        cutoff = one_year_cutoff()
+        cutoff = history_cutoff()
         for segment, base_url, media_type in self.category_urls:
-            checkpoint_segment = f"{self.checkpoint_version}_{segment}"
+            checkpoint_segment = history_segment(segment)
             saved = progress.get(checkpoint_segment, {})
             if backfill and saved.get("completed"):
                 print(f"青文一年期回填：略過已完成區段 {segment}", flush=True)
                 continue
-            page_number = int(saved.get("next_page", 1)) if backfill else 1
+            page_number = (
+                max(1, int(saved.get("next_page", 1)) - 2) if backfill else 1
+            )
             max_pages = None if backfill else self.incremental_catalog_pages
             while True:
                 if max_pages and page_number > max_pages:
@@ -99,7 +100,7 @@ class ChingWinSource:
                 )
                 print(
                     f"青文 {segment} 第 {page_number}/{total_pages} 頁："
-                    f"一年窗口 {len(page_records)} 筆、未收錄 {len(records)} 筆",
+                    f"年度窗口 {len(page_records)} 筆、未收錄 {len(records)} 筆",
                     flush=True,
                 )
                 yield records, checkpoint

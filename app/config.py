@@ -42,10 +42,18 @@ class Settings:
     port: int
     cloud_mode: bool
     auto_update: bool
+    catalog_sync_token: str = ""
+    catalog_sync_url: str = "https://anishelf-wmcu.onrender.com"
 
     @property
     def database_configured(self) -> bool:
         return bool(self.db_password and self.db_password != "replace-me")
+
+    @property
+    def catalog_sync_configured(self) -> bool:
+        return len(self.catalog_sync_token) >= 32 and self.catalog_sync_url.startswith(
+            ("http://", "https://")
+        )
 
 
 def get_settings() -> Settings:
@@ -64,4 +72,8 @@ def get_settings() -> Settings:
         port=int(port_value),
         cloud_mode=cloud_mode,
         auto_update=_env_bool("ANISHELF_AUTO_UPDATE", not cloud_mode),
+        catalog_sync_token=os.getenv("ANISHELF_CATALOG_SYNC_TOKEN", "").strip(),
+        catalog_sync_url=os.getenv(
+            "ANISHELF_CATALOG_SYNC_URL", "https://anishelf-wmcu.onrender.com"
+        ).strip().rstrip("/"),
     )

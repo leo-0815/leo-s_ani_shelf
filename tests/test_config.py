@@ -15,6 +15,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.port, 8765)
         self.assertFalse(settings.cloud_mode)
         self.assertTrue(settings.auto_update)
+        self.assertFalse(settings.catalog_sync_configured)
         self.assertEqual(settings.db_ssl_mode, "preferred")
 
     def test_render_uses_public_bind_port_and_disables_startup_update(self) -> None:
@@ -43,6 +44,19 @@ class ConfigTests(unittest.TestCase):
             settings = get_settings()
         self.assertEqual(settings.host, "127.0.0.2")
         self.assertTrue(settings.auto_update)
+
+    def test_catalog_sync_requires_url_and_long_token(self) -> None:
+        with patch("app.config.load_dotenv"), patch.dict(
+            os.environ,
+            {
+                "ANISHELF_CATALOG_SYNC_TOKEN": "x" * 64,
+                "ANISHELF_CATALOG_SYNC_URL": "https://shelf.example.com/",
+            },
+            clear=True,
+        ):
+            settings = get_settings()
+        self.assertTrue(settings.catalog_sync_configured)
+        self.assertEqual(settings.catalog_sync_url, "https://shelf.example.com")
 
 
 if __name__ == "__main__":

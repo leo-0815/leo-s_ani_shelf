@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import os
 from datetime import date
 from html.parser import HTMLParser
 from typing import Iterable
@@ -246,3 +247,16 @@ def one_year_cutoff(today: date | None = None) -> date:
         return today.replace(year=today.year - 1)
     except ValueError:
         return today.replace(year=today.year - 1, day=28)
+
+
+def history_cutoff(today: date | None = None) -> date:
+    """Use a calendar-year window when the local history runner selects one."""
+    raw = os.getenv("ANISHELF_HISTORY_YEAR", "").strip()
+    if raw.isdigit() and 1990 <= int(raw) <= 2100:
+        return date(int(raw), 1, 1)
+    return one_year_cutoff(today)
+
+
+def history_segment(prefix: str) -> str:
+    raw = os.getenv("ANISHELF_HISTORY_YEAR", "").strip()
+    return f"history_v2_{raw}_{prefix}" if raw.isdigit() else f"one_year_v1_{prefix}"
