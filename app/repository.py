@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import re
 from typing import Any
 
 from .db import transaction
-from .models import BookRecord, detect_edition, extract_volume, infer_series_title, normalize_text
+from .models import (
+    BookRecord,
+    detect_edition,
+    extract_volume,
+    infer_series_title,
+    catalog_sync_hash,
+    SYNC_HASH_VERSION,
+    normalize_text,
+)
 
 
 BOOK_FIELDS = (
@@ -14,6 +23,10 @@ BOOK_FIELDS = (
     "volume_label",
     "edition_type",
     "media_type",
+    "content_rating",
+    "rating_raw",
+    "rating_source",
+    "rating_confidence",
     "author",
     "isbn",
     "cover_url",
@@ -25,6 +38,8 @@ BOOK_FIELDS = (
     "source_hash",
 )
 HISTORY_FIELDS = ("title", "release_date", "release_precision", "release_status")
+RATING_FIELDS = ("content_rating", "rating_raw", "rating_source", "rating_confidence")
+CHANGE_ORIGINS = {"crawler", "cloud_pull", "sync_upload", "manual"}
 
 
 def serialize_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -48,8 +63,19 @@ def get_publisher_id(connection: Any, code: str) -> int:
     return int(row["id"])
 
 
-def upsert_book(record: BookRecord) -> str:
+def upsert_book(
+    record: BookRecord,
+    *,
+    change_origin: str = "crawler",
+    source_hash_override: str | None = None,
+) -> str:
+    if change_origin not in CHANGE_ORIGINS:
+        raise ValueError("Invalid catalog change origin")
     data = record.prepared()
+    if source_hash_override is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", source_hash_override):
+            raise ValueError("Invalid peer source hash")
+        data["source_hash"] = source_hash_override
     with transaction() as connection:
         publisher_id = get_publisher_id(connection, record.publisher_code)
         with connection.cursor() as cursor:
@@ -99,6 +125,14 @@ def upsert_book(record: BookRecord) -> str:
                             "(book_id, state, follow_series) VALUES (%s, 'wanted', TRUE)",
                             (book_id,),
                         )
+                _record_catalog_change(
+                    cursor,
+                    book_id,
+                    "inserted",
+                    data["source_hash"],
+                    change_origin,
+                    ("*",),
+                )
                 return "inserted"
 
             if existing["source_hash"] == data["source_hash"]:
@@ -108,9 +142,14 @@ def upsert_book(record: BookRecord) -> str:
                 )
                 return "unchanged"
 
+            write_data = (
+                _sync_write_data(existing, data)
+                if change_origin in {"cloud_pull", "sync_upload"}
+                else _crawler_write_data(existing, data)
+            )
             for field in HISTORY_FIELDS:
                 old = existing.get(field)
-                new = data.get(field)
+                new = write_data.get(field)
                 if old != new:
                     cursor.execute(
                         "INSERT INTO release_history (book_id, field_name, old_value, new_value) "
@@ -122,16 +161,91 @@ def upsert_book(record: BookRecord) -> str:
                 assignments = f"source_key = %s, {assignments}"
                 values = [
                     record.source_key,
-                    *[data[field] for field in BOOK_FIELDS],
+                    *[write_data[field] for field in BOOK_FIELDS],
                     existing["id"],
                 ]
             else:
-                values = [*[data[field] for field in BOOK_FIELDS], existing["id"]]
+                values = [*[write_data[field] for field in BOOK_FIELDS], existing["id"]]
             cursor.execute(
                 f"UPDATE books SET {assignments}, last_seen_at = CURRENT_TIMESTAMP WHERE id = %s",
                 values,
             )
+            changed_fields = [
+                field for field in BOOK_FIELDS if existing.get(field) != write_data.get(field)
+            ]
+            if migrate_source_key:
+                changed_fields.insert(0, "source_key")
+            _record_catalog_change(
+                cursor,
+                int(existing["id"]),
+                "updated",
+                write_data["source_hash"],
+                change_origin,
+                changed_fields,
+            )
             return "updated"
+
+
+def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    result = dict(data)
+    if existing.get("rating_locked"):
+        for field in RATING_FIELDS:
+            result[field] = existing.get(field)
+    return result
+
+
+def _sync_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """Do not let sparse peer rows erase richer local metadata."""
+    result = _crawler_write_data(existing, data)
+    for field in {
+        "series_title",
+        "volume_label",
+        "author",
+        "isbn",
+        "cover_url",
+        "list_price",
+        "release_date",
+        "rating_raw",
+    }:
+        if result.get(field) in {None, ""} and existing.get(field) not in {None, ""}:
+            result[field] = existing.get(field)
+    for field in {
+        "media_type",
+        "content_rating",
+        "rating_source",
+        "release_precision",
+        "release_status",
+    }:
+        if result.get(field) == "unknown" and existing.get(field) not in {None, "", "unknown"}:
+            result[field] = existing.get(field)
+    if result.get("content_rating") == existing.get("content_rating"):
+        result["rating_confidence"] = max(
+            int(result.get("rating_confidence") or 0),
+            int(existing.get("rating_confidence") or 0),
+        )
+    return result
+
+
+def _record_catalog_change(
+    cursor: Any,
+    book_id: int,
+    change_type: str,
+    source_hash: str,
+    change_origin: str,
+    changed_fields: list[str] | tuple[str, ...],
+) -> None:
+    cursor.execute(
+        "INSERT INTO catalog_changes "
+        "(book_id, change_type, change_origin, source_hash, changed_fields) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (
+            book_id,
+            change_type,
+            change_origin,
+            source_hash,
+            ",".join(changed_fields)[:500] or "*",
+        ),
+    )
 
 
 def _as_text(value: Any) -> str | None:
@@ -904,6 +1018,155 @@ def rebuild_book_metadata() -> int:
                 values,
             )
     return len(values)
+
+
+def local_catalog_manifest(after_id: int = 0, limit: int = 1000) -> dict[str, Any]:
+    page_limit = min(max(int(limit), 1), 1000)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT b.*, p.code AS publisher_code "
+                "FROM books b JOIN publishers p ON p.id = b.publisher_id "
+                "WHERE b.id > %s ORDER BY b.id LIMIT %s",
+                (max(int(after_id), 0), page_limit + 1),
+            )
+            rows = cursor.fetchall()
+    has_more = len(rows) > page_limit
+    items = []
+    for row in rows[:page_limit]:
+        item = serialize_row(row)
+        items.append(
+            {
+                "id": item["id"],
+                "publisher_code": item["publisher_code"],
+                "source_key": item["source_key"],
+                "source_hash": item["source_hash"],
+                "sync_hash": catalog_sync_hash(item),
+                "sync_hash_version": SYNC_HASH_VERSION,
+                "updated_at": item["updated_at"],
+            }
+        )
+    return {
+        "items": items,
+        "next_after_id": int(items[-1]["id"]) if items else max(int(after_id), 0),
+        "has_more": has_more,
+    }
+
+
+def pending_catalog_changes(after_change_id: int, limit: int = 500) -> dict[str, Any]:
+    """Scan local changes; callers may safely advance over cloud-origin echoes."""
+    page_limit = min(max(int(limit), 1), 500)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT c.id AS change_id, c.change_origin, b.*, "
+                "p.code AS publisher_code FROM catalog_changes c "
+                "JOIN books b ON b.id = c.book_id "
+                "JOIN publishers p ON p.id = b.publisher_id "
+                "WHERE c.id > %s ORDER BY c.id LIMIT %s",
+                (max(int(after_change_id), 0), page_limit),
+            )
+            rows = cursor.fetchall()
+    items = [serialize_row(row) for row in rows]
+    for item in items:
+        item.pop("publisher_id", None)
+    return {
+        "items": items,
+        "last_scanned_change_id": (
+            int(items[-1]["change_id"]) if items else max(int(after_change_id), 0)
+        ),
+        "has_more": len(items) == page_limit,
+    }
+
+
+def catalog_rows_by_keys(keys: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    if not keys:
+        return []
+    rows: list[dict[str, Any]] = []
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            for publisher_code, source_key in keys:
+                cursor.execute(
+                    "SELECT b.*, p.code AS publisher_code FROM books b "
+                    "JOIN publishers p ON p.id = b.publisher_id "
+                    "WHERE p.code = %s AND b.source_key = %s",
+                    (publisher_code, source_key),
+                )
+                row = cursor.fetchone()
+                if row:
+                    item = serialize_row(row)
+                    item.pop("publisher_id", None)
+                    rows.append(item)
+    return rows
+
+
+def get_catalog_peer_state(peer_code: str = "cloud") -> dict[str, Any]:
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM catalog_sync_state WHERE peer_code = %s", (peer_code,)
+            )
+            row = cursor.fetchone()
+    return row or {
+        "peer_code": peer_code,
+        "last_pulled_change_id": 0,
+        "last_pushed_change_id": 0,
+        "last_verified_at": None,
+        "last_success_at": None,
+        "last_error": None,
+    }
+
+
+def prune_catalog_changes(up_to_id: int, retain_id_window: int = 500) -> int:
+    """Bound local sync bookkeeping after the cloud has acknowledged it."""
+    threshold = max(0, int(up_to_id) - max(int(retain_id_window), 0))
+    if threshold <= 0:
+        return 0
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM catalog_changes WHERE id <= %s", (threshold,))
+            return int(cursor.rowcount or 0)
+
+
+def save_catalog_peer_state(
+    peer_code: str = "cloud",
+    *,
+    last_pulled_change_id: int | None = None,
+    last_pushed_change_id: int | None = None,
+    verified: bool = False,
+    error: str | None = None,
+) -> None:
+    state = get_catalog_peer_state(peer_code)
+    pulled = (
+        int(last_pulled_change_id)
+        if last_pulled_change_id is not None
+        else int(state["last_pulled_change_id"] or 0)
+    )
+    pushed = (
+        int(last_pushed_change_id)
+        if last_pushed_change_id is not None
+        else int(state["last_pushed_change_id"] or 0)
+    )
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO catalog_sync_state "
+                "(peer_code, last_pulled_change_id, last_pushed_change_id, "
+                "last_verified_at, last_success_at, last_error) "
+                "VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s) "
+                "ON DUPLICATE KEY UPDATE "
+                "last_pulled_change_id = VALUES(last_pulled_change_id), "
+                "last_pushed_change_id = VALUES(last_pushed_change_id), "
+                "last_verified_at = COALESCE(VALUES(last_verified_at), last_verified_at), "
+                "last_success_at = CURRENT_TIMESTAMP, last_error = VALUES(last_error)",
+                (
+                    peer_code,
+                    pulled,
+                    pushed,
+                    datetime.now() if verified else None,
+                    error[:5000] if error else None,
+                ),
+            )
 
 
 def known_source_keys(source_code: str) -> set[str]:

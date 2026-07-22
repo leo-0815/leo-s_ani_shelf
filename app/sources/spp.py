@@ -12,6 +12,8 @@ from .common import (
     RateLimiter,
     fetch_bytes,
     fetch_html,
+    history_cutoff,
+    history_segment,
     one_year_cutoff,
     parse_page,
     parse_tables,
@@ -23,7 +25,6 @@ class SppSource:
     name = "尖端出版"
     list_url = "https://event.spp.com.tw/event/publish.aspx"
     sitemap_url = "https://www.spp.com.tw/Sitemap/sitemap_ShopSalePage.xml.gz"
-    checkpoint_segment = "one_year_v1_catalog"
     batch_size = 40
     workers = 3
     requests_per_second = 2.5
@@ -34,6 +35,7 @@ class SppSource:
         self._limiter = RateLimiter(self.requests_per_second)
         self.errors: list[str] = []
         self.skipped_count = 0
+        self._catalog_cutoff = one_year_cutoff()
 
     def collect(
         self,
@@ -79,14 +81,16 @@ class SppSource:
     ) -> Iterator[tuple[list[BookRecord], dict[str, Any]]]:
         from ..repository import get_backfill_progress
 
-        progress = get_backfill_progress(self.code).get(self.checkpoint_segment, {})
+        checkpoint_segment = history_segment("catalog")
+        progress = get_backfill_progress(self.code).get(checkpoint_segment, {})
         if progress.get("completed"):
             print("尖端大型回填：一年商品區段已完成", flush=True)
             return
         urls = self._sitemap_urls()
         self.latest_cursor = urls[0] if urls else None
-        start = int(progress.get("next_page", 0))
-        cutoff = one_year_cutoff()
+        start = max(0, int(progress.get("next_page", 0)) - self.batch_size)
+        cutoff = history_cutoff()
+        self._catalog_cutoff = cutoff
         consecutive_old_batches = 0
         for offset in range(start, len(urls), self.batch_size):
             candidates = urls[offset : offset + self.batch_size]
@@ -115,7 +119,7 @@ class SppSource:
                 flush=True,
             )
             yield records, {
-                "segment": self.checkpoint_segment,
+                "segment": checkpoint_segment,
                 "next_page": next_offset,
                 "completed": completed,
                 "error_count": error_count,
@@ -202,7 +206,7 @@ class SppSource:
             release = self._date(
                 self._field(description, r"上市日：\s*(20\d{2}/\d{1,2}/\d{1,2})")
             )
-        if release and release < one_year_cutoff():
+        if release and release < self._catalog_cutoff:
             return None, release
         images = data.get("ImageList") or []
         cover_url = str(images[0].get("PicUrl", "")).strip() if images else ""

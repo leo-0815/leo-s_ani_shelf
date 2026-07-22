@@ -86,6 +86,19 @@ def ensure_schema() -> None:
                 "VARCHAR(20) NOT NULL DEFAULT 'paper'",
             )
             _ensure_column(cursor, "crawl_jobs", "skipped_count", "INT UNSIGNED NOT NULL DEFAULT 0")
+            _ensure_column(
+                cursor, "books", "content_rating", "VARCHAR(30) NOT NULL DEFAULT 'unknown'"
+            )
+            _ensure_column(cursor, "books", "rating_raw", "VARCHAR(100) NULL")
+            _ensure_column(
+                cursor, "books", "rating_source", "VARCHAR(30) NOT NULL DEFAULT 'unknown'"
+            )
+            _ensure_column(
+                cursor, "books", "rating_confidence", "TINYINT UNSIGNED NOT NULL DEFAULT 0"
+            )
+            _ensure_column(
+                cursor, "books", "rating_locked", "BOOLEAN NOT NULL DEFAULT FALSE"
+            )
 
 
 def _ensure_column(cursor: Any, table: str, column: str, definition: str) -> None:
