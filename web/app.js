@@ -67,6 +67,7 @@ function applyRoleUi() {
   const sourcesNav = document.querySelector('[data-view="sources"]');
   if (sourcesNav) sourcesNav.classList.toggle("hidden", !isAdmin);
   $("#updateButton").classList.toggle("hidden", !isAdmin);
+  $("#discordNotificationCard").classList.toggle("hidden", !isAdmin);
   document.querySelectorAll('a[href="/api/export.json"], a[href="/api/export.csv"]').forEach(node => {
     node.classList.toggle("hidden", !isAdmin);
   });
@@ -654,6 +655,50 @@ async function loadNotificationPreferences() {
   });
   $("#notifyDateChanges").checked = Boolean(preferences.notify_release_date_changes);
   $("#notifyFollowedSeries").checked = Boolean(preferences.notify_followed_series);
+  setChannelStatus("emailChannelStatus", preferences.email_configured);
+  $("#testEmailNotification").disabled = !preferences.email_configured;
+  if (state.user?.is_admin) {
+    setChannelStatus("discordChannelStatus", preferences.discord_configured);
+    $("#testDiscordNotification").disabled = !preferences.discord_configured;
+    $("#discordLeadDays").innerHTML = (preferences.discord_lead_days || []).map(day =>
+      `<span>${Number(day) === 0 ? "上市當天" : `${Number(day)} 天前`}</span>`
+    ).join("") || "<span>未設定</span>";
+  }
+}
+
+function setChannelStatus(id, configured) {
+  const status = $(`#${id}`);
+  status.textContent = configured ? "已連接" : "尚未設定";
+  status.classList.toggle("connected", Boolean(configured));
+  status.classList.toggle("missing", !configured);
+}
+
+async function testNotificationChannel(channel) {
+  const isDiscord = channel === "discord";
+  const button = $(isDiscord ? "#testDiscordNotification" : "#testEmailNotification");
+  const resultNode = $(isDiscord ? "#discordTestResult" : "#emailTestResult");
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "傳送中…";
+  resultNode.classList.add("hidden");
+  resultNode.classList.remove("error");
+  try {
+    const result = await api(`/api/notifications/test-${channel}`, {
+      method: "POST",
+      body: "{}",
+    });
+    resultNode.textContent = result.message;
+    resultNode.classList.remove("hidden");
+    toast(result.message);
+  } catch (error) {
+    resultNode.textContent = error.message;
+    resultNode.classList.add("error");
+    resultNode.classList.remove("hidden");
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
 }
 
 async function saveNotificationPreferences(event) {
@@ -818,6 +863,8 @@ $("#upcomingDays").addEventListener("change", () => loadUpcoming().catch(error =
 $("#notifyButton").addEventListener("click", () => enableNotifications().catch(error => toast(error.message, true)));
 $("#emailSettingsButton").addEventListener("click", () => switchView("notifications"));
 $("#notificationPreferencesForm").addEventListener("submit", saveNotificationPreferences);
+$("#testEmailNotification").addEventListener("click", () => testNotificationChannel("email"));
+$("#testDiscordNotification").addEventListener("click", () => testNotificationChannel("discord"));
 $("#restoreRecommendations").addEventListener("click", async () => {
   try {
     await api("/api/recommendations/dismissals", {method: "DELETE"});

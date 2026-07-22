@@ -19,6 +19,7 @@ from app.notifications import (
     deliver_notifications,
     deliver_email_notifications,
     send_test_email,
+    send_test_discord,
 )
 
 
@@ -162,6 +163,18 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(result["recipient_count"], 1)
         self.assertEqual(sent[0][1], "mailer@example.com")
         self.assertIn("AniShelf", sent[0][2])
+
+    def test_discord_smoke_test_does_not_create_delivery_records(self) -> None:
+        sent = []
+        result = send_test_discord(
+            webhook_url="https://discord.example/webhook",
+            public_url="https://anishelf.example.com",
+            sender=lambda *args: sent.append(args),
+        )
+        self.assertEqual(result["delivered_count"], 1)
+        self.assertEqual(sent[0][0], "https://discord.example/webhook")
+        self.assertIn("Discord 通知測試成功", sent[0][1])
+        self.assertIn("/#notifications", sent[0][1])
 
 
 if __name__ == "__main__":
