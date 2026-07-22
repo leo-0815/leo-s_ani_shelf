@@ -564,6 +564,25 @@ def send_test_email(
     }
 
 
+def send_test_discord(
+    *,
+    webhook_url: str,
+    public_url: str = "",
+    sender: Callable[[str, str], None] = post_discord,
+) -> dict[str, Any]:
+    """Send one Discord smoke-test without creating notification records."""
+    if not webhook_url:
+        raise NotificationError("Discord webhook 尚未設定")
+    lines = [
+        "🧪 **AniShelf Discord 通知測試成功**",
+        "這是管理員從通知設定頁發送的測試訊息。正式通知與排程不受影響。",
+    ]
+    if public_url:
+        lines.extend(["", f"<{public_url}/#notifications>"])
+    sender(webhook_url, "\n".join(lines))
+    return {"enabled": True, "delivered_count": 1}
+
+
 def deliver_notifications(
     *,
     webhook_url: str,

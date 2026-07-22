@@ -165,10 +165,13 @@
                 <strong>Email 上市通知</strong>
                 <p>每日排程會把同一天的消息整理成一封信，不會要求 Gmail 信件權限。</p>
               </div>
-              <label class="toggle-control">
-                <input id="emailNotificationsEnabled" type="checkbox" />
-                <span>啟用</span>
-              </label>
+              <div class="notification-channel-actions">
+                <span class="channel-status" id="emailChannelStatus">檢查中</span>
+                <label class="toggle-control">
+                  <input id="emailNotificationsEnabled" type="checkbox" />
+                  <span>啟用</span>
+                </label>
+              </div>
             </div>
             <div class="notification-email">
               <small>通知收件地址</small>
@@ -194,8 +197,36 @@
             <div class="notification-note">
               通知預設關閉。啟用後只寄送你的追蹤內容；可隨時回到此頁關閉。
             </div>
-            <button class="primary" type="submit">儲存通知設定</button>
+            <div class="notification-form-actions">
+              <button class="primary" type="submit">儲存通知設定</button>
+              <button class="secondary" id="testEmailNotification" type="button">寄送 Email 測試信</button>
+            </div>
+            <p class="notification-test-result hidden" id="emailTestResult" role="status" aria-live="polite"></p>
           </form>
+          <section class="notification-admin-channel hidden" id="discordNotificationCard">
+            <div class="notification-primary discord-primary">
+              <div>
+                <strong>Discord 管理員通知</strong>
+                <p>只整理管理員的訂選與追蹤內容，也會回報爬蟲或 Email 寄送異常。</p>
+              </div>
+              <span class="channel-status" id="discordChannelStatus">檢查中</span>
+            </div>
+            <div class="discord-details">
+              <div>
+                <small>上市提醒</small>
+                <div class="read-only-chips" id="discordLeadDays"></div>
+              </div>
+              <div>
+                <small>其他訊息</small>
+                <p>上市日期異動、追蹤系列新刊、排程更新異常</p>
+              </div>
+            </div>
+            <div class="notification-note">
+              Webhook 儲存在 Render 與 GitHub Secrets，基於安全考量不會顯示在此頁。
+            </div>
+            <button class="secondary" id="testDiscordNotification" type="button">寄送 Discord 測試訊息</button>
+            <p class="notification-test-result hidden" id="discordTestResult" role="status" aria-live="polite"></p>
+          </section>
         </section>
 
         <section class="content-card view-section hidden" id="qualityView">

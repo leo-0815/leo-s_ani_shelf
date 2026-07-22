@@ -28,7 +28,13 @@ from .auth import (
 from .config import ROOT, get_settings
 from .crawler import create_job, get_job
 from .db import DatabaseUnavailable, ensure_schema, ping
-from .notifications import get_notification_preferences, set_notification_preferences
+from .notifications import (
+    NotificationError,
+    get_notification_preferences,
+    send_test_discord,
+    send_test_email,
+    set_notification_preferences,
+)
 from .repository import (
     clear_recommendation_dismissals,
     delete_wishlist,
@@ -189,7 +195,20 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/stats":
             self._json(stats(user_id))
         elif parsed.path == "/api/notification-preferences":
-            self._json(get_notification_preferences(user_id))
+            preferences = get_notification_preferences(user_id)
+            settings = get_settings()
+            preferences.update(
+                {
+                    "email_configured": settings.email_configured,
+                    "discord_configured": bool(settings.discord_webhook_url)
+                    if user.get("is_admin")
+                    else False,
+                    "discord_lead_days": list(settings.notification_lead_days)
+                    if user.get("is_admin")
+                    else [],
+                }
+            )
+            self._json(preferences)
         elif parsed.path == "/api/jobs/latest":
             if self._require_admin(user):
                 self._json(get_job() or {})
@@ -322,6 +341,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif parsed.path == "/api/notification-preferences":
                 self._json(set_notification_preferences(user_id, payload))
+            elif parsed.path == "/api/notifications/test-email":
+                result = send_test_email(
+                    settings=get_settings(),
+                    recipient=str(user.get("email") or ""),
+                )
+                self._json({**result, "message": "測試信已寄出，請查看收件匣"})
+            elif parsed.path == "/api/notifications/test-discord":
+                if not self._require_admin(user):
+                    return
+                settings = get_settings()
+                result = send_test_discord(
+                    webhook_url=settings.discord_webhook_url,
+                    public_url=settings.public_url,
+                )
+                self._json({**result, "message": "Discord 測試訊息已送出"})
             elif match := re.fullmatch(r"/api/wishlist/(\d+)", parsed.path):
                 set_wishlist(
                     user_id,
@@ -342,6 +376,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(exc), "setup_required": True}, HTTPStatus.SERVICE_UNAVAILABLE)
         except (ValueError, KeyError) as exc:
             self._json({"error": str(exc).strip("'")}, HTTPStatus.BAD_REQUEST)
+        except NotificationError as exc:
+            self._json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
         except Exception as exc:
             self._json({"error": f"Server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
