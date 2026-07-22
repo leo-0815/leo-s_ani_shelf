@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from typing import Any, Iterator
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
@@ -59,6 +60,100 @@ class TohanSource:
         if not records and not known_keys:
             raise RuntimeError("台灣東販商品清單沒有解析到有效書目")
         return records
+
+    def collect_batches(
+        self,
+        known_keys: set[str] | None = None,
+        cursor_value: str | None = None,
+        backfill: bool = False,
+    ) -> Iterator[tuple[list[BookRecord], dict[str, Any] | None]]:
+        """Yield one catalog page at a time so a historical run can resume safely."""
+        from ..repository import get_backfill_progress, get_sync_state
+
+        if not backfill:
+            yield self.collect(known_keys, cursor_value, backfill=False), None
+            return
+
+        checkpoint_segment = "catalog_v2_catalog"
+        saved = get_backfill_progress(self.code).get(checkpoint_segment, {})
+        if saved.get("completed"):
+            return
+        # Compatibility with the full backfill completed before page-level
+        # checkpoints existed. This avoids re-downloading a finished catalog.
+        if not saved and get_sync_state(self.code).get("backfill_completed"):
+            return
+
+        known_keys = known_keys or set()
+        first_listing = parse_page(fetch_html(self.catalog_url))
+        page_urls = [self.catalog_url]
+        page_urls.extend(
+            urljoin(self.catalog_url, href)
+            for href, text in first_listing.links
+            if "page=" in href and text.strip().isdigit()
+        )
+        page_urls = self._ordered_page_urls(self.catalog_url, page_urls)
+        start_page = max(1, int(saved.get("next_page", 1)) - 1)
+
+        for page_number in range(start_page, len(page_urls) + 1):
+            page_url = page_urls[page_number - 1]
+            listing = (
+                first_listing
+                if page_number == 1
+                else parse_page(fetch_html(page_url))
+            )
+            candidates: list[str] = []
+            for href, _text in listing.links:
+                absolute = urljoin(page_url, href)
+                parsed = urlparse(absolute)
+                query = parse_qs(parsed.query)
+                source_id = query.get("id", [""])[0]
+                if (
+                    parsed.path.endswith("/product.php")
+                    and query.get("act") == ["view"]
+                    and source_id
+                    and source_id not in known_keys
+                ):
+                    known_keys.add(source_id)
+                    candidates.append(absolute)
+
+            records: list[BookRecord] = []
+            for url in unique(candidates):
+                polite_pause()
+                try:
+                    records.append(self._parse_detail(url, fetch_html(url)))
+                except (ValueError, RuntimeError):
+                    continue
+            self.latest_cursor = self.list_url
+            completed = page_number >= len(page_urls)
+            yield records, {
+                "segment": checkpoint_segment,
+                "next_page": page_number + 1,
+                "completed": completed,
+                "error_count": 0,
+            }
+            if not completed:
+                polite_pause(0.35)
+
+    def commit_batch(self, checkpoint: dict[str, Any] | None) -> None:
+        if not checkpoint:
+            return
+        from ..repository import save_backfill_progress
+
+        save_backfill_progress(
+            self.code,
+            str(checkpoint["segment"]),
+            int(checkpoint["next_page"]),
+            bool(checkpoint["completed"]),
+        )
+
+    @staticmethod
+    def _ordered_page_urls(start_url: str, page_urls: list[str]) -> list[str]:
+        by_page: dict[int, str] = {1: start_url}
+        for url in unique(page_urls):
+            raw_page = parse_qs(urlparse(url).query).get("page", ["1"])[0]
+            if raw_page.isdigit():
+                by_page[int(raw_page)] = url
+        return [by_page[number] for number in sorted(by_page)]
 
     def _parse_detail(self, url: str, markup: str) -> BookRecord:
         page = parse_page(markup)

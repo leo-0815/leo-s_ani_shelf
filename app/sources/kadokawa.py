@@ -80,6 +80,10 @@ class KadokawaSource:
                 print(f"角川大型回填：略過已完成區段 {segment}", flush=True)
                 continue
             page_number = int(saved.get("next_page", 1)) if backfill else 1
+            if backfill and page_number > 1:
+                # Re-read a small overlap because products can move when the
+                # storefront inserts newer items ahead of the saved page.
+                page_number = max(1, page_number - 2)
             max_incremental_pages = (
                 None if segment == "upcoming" else self.incremental_catalog_pages
             )

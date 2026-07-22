@@ -32,7 +32,7 @@ SOURCES = {
     "spp": SppSource,
     "egmanga": EgMangaSource,
 }
-HISTORY_SOURCES = ("chingwin", "spp", "tongli")
+HISTORY_SOURCES = ("chingwin", "kadokawa", "tohan", "spp", "tongli")
 _job_lock = threading.Lock()
 
 
