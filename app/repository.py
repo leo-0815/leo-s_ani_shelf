@@ -128,7 +128,11 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
                 )
                 return "unchanged"
 
-            write_data = _crawler_write_data(existing, data)
+            write_data = (
+                _sync_write_data(existing, data)
+                if change_origin in {"cloud_pull", "sync_upload"}
+                else _crawler_write_data(existing, data)
+            )
             for field in HISTORY_FIELDS:
                 old = existing.get(field)
                 new = write_data.get(field)
@@ -174,6 +178,40 @@ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[
     if existing.get("rating_locked"):
         for field in RATING_FIELDS:
             result[field] = existing.get(field)
+    return result
+
+
+def _sync_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """Merge a peer catalog without letting sparse rows erase richer metadata."""
+    result = _crawler_write_data(existing, data)
+    nullable_fields = {
+        "series_title",
+        "volume_label",
+        "author",
+        "isbn",
+        "cover_url",
+        "list_price",
+        "release_date",
+        "rating_raw",
+    }
+    unknown_fields = {
+        "media_type",
+        "content_rating",
+        "rating_source",
+        "release_precision",
+        "release_status",
+    }
+    for field in nullable_fields:
+        if result.get(field) in {None, ""} and existing.get(field) not in {None, ""}:
+            result[field] = existing.get(field)
+    for field in unknown_fields:
+        if result.get(field) == "unknown" and existing.get(field) not in {None, "", "unknown"}:
+            result[field] = existing.get(field)
+    if result.get("content_rating") == existing.get("content_rating"):
+        result["rating_confidence"] = max(
+            int(result.get("rating_confidence") or 0),
+            int(existing.get("rating_confidence") or 0),
+        )
     return result
 
 
@@ -812,6 +850,105 @@ def list_publishers() -> list[dict[str, Any]]:
                 "ORDER BY p.enabled DESC, p.name"
             )
             return [serialize_row(row) for row in cursor.fetchall()]
+
+
+def catalog_sync_status() -> dict[str, Any]:
+    """Return a small catalog-only summary for sync clients."""
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS total_books, COALESCE(MAX(id), 0) AS latest_book_id "
+                "FROM books"
+            )
+            result = dict(cursor.fetchone())
+            cursor.execute(
+                "SELECT COALESCE(MAX(id), 0) AS latest_change_id FROM catalog_changes"
+            )
+            result.update(cursor.fetchone())
+            cursor.execute(
+                "SELECT p.code, COUNT(*) AS book_count FROM books b "
+                "JOIN publishers p ON p.id = b.publisher_id GROUP BY p.id, p.code "
+                "ORDER BY p.code"
+            )
+            result["publishers"] = {
+                str(row["code"]): int(row["book_count"] or 0)
+                for row in cursor.fetchall()
+            }
+    for key in ("total_books", "latest_book_id", "latest_change_id"):
+        result[key] = int(result.get(key) or 0)
+    return result
+
+
+def catalog_manifest(after_id: int = 0, limit: int = 500) -> dict[str, Any]:
+    """Return lightweight identities and hashes used for an exact peer diff."""
+    page_limit = min(max(int(limit), 1), 1000)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT b.id, p.code AS publisher_code, b.source_key, b.source_hash, "
+                "b.updated_at FROM books b JOIN publishers p ON p.id = b.publisher_id "
+                "WHERE b.id > %s ORDER BY b.id LIMIT %s",
+                (max(int(after_id), 0), page_limit + 1),
+            )
+            rows = cursor.fetchall()
+    has_more = len(rows) > page_limit
+    items = [serialize_row(row) for row in rows[:page_limit]]
+    return {
+        "items": items,
+        "next_after_id": int(items[-1]["id"]) if items else max(int(after_id), 0),
+        "has_more": has_more,
+    }
+
+
+def catalog_books(after_id: int = 0, limit: int = 500) -> dict[str, Any]:
+    """Return full catalog rows while excluding every account-owned table."""
+    page_limit = min(max(int(limit), 1), 500)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT b.*, p.code AS publisher_code, p.name AS publisher_name "
+                "FROM books b JOIN publishers p ON p.id = b.publisher_id "
+                "WHERE b.id > %s ORDER BY b.id LIMIT %s",
+                (max(int(after_id), 0), page_limit + 1),
+            )
+            rows = cursor.fetchall()
+    has_more = len(rows) > page_limit
+    items = [serialize_row(row) for row in rows[:page_limit]]
+    for item in items:
+        item.pop("publisher_id", None)
+    return {
+        "items": items,
+        "next_after_id": int(items[-1]["id"]) if items else max(int(after_id), 0),
+        "has_more": has_more,
+    }
+
+
+def catalog_change_feed(after_change_id: int = 0, limit: int = 500) -> dict[str, Any]:
+    """Page catalog mutations by a stable, monotonically increasing cursor."""
+    page_limit = min(max(int(limit), 1), 500)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT c.id AS change_id, c.change_type, c.change_origin, "
+                "c.source_hash AS change_source_hash, c.changed_fields, c.changed_at, "
+                "b.*, p.code AS publisher_code, p.name AS publisher_name "
+                "FROM catalog_changes c JOIN books b ON b.id = c.book_id "
+                "JOIN publishers p ON p.id = b.publisher_id "
+                "WHERE c.id > %s ORDER BY c.id LIMIT %s",
+                (max(int(after_change_id), 0), page_limit + 1),
+            )
+            rows = cursor.fetchall()
+    has_more = len(rows) > page_limit
+    items = [serialize_row(row) for row in rows[:page_limit]]
+    for item in items:
+        item.pop("publisher_id", None)
+    return {
+        "items": items,
+        "next_after_change_id": (
+            int(items[-1]["change_id"]) if items else max(int(after_change_id), 0)
+        ),
+        "has_more": has_more,
+    }
 
 
 def stats(user_id: int) -> dict[str, int]:

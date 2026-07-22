@@ -26,6 +26,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.db_pool_size, 4)
         self.assertEqual(settings.health_cache_seconds, 20)
         self.assertEqual(settings.session_touch_minutes, 10)
+        self.assertFalse(settings.catalog_sync_configured)
 
     def test_render_uses_public_bind_port_and_disables_startup_update(self) -> None:
         with patch("app.config.load_dotenv"), patch.dict(
@@ -101,6 +102,16 @@ class ConfigTests(unittest.TestCase):
             settings = get_settings()
         self.assertEqual(settings.email_test_mode, "github_actions")
         self.assertTrue(settings.github_email_test_configured)
+
+    def test_catalog_sync_requires_a_long_random_token(self) -> None:
+        with patch("app.config.load_dotenv"), patch.dict(
+            os.environ,
+            {"ANISHELF_CATALOG_SYNC_TOKEN": "x" * 32},
+            clear=True,
+        ):
+            settings = get_settings()
+        self.assertTrue(settings.catalog_sync_configured)
+        self.assertEqual(settings.catalog_sync_token, "x" * 32)
 
 
 if __name__ == "__main__":

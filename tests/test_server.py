@@ -80,6 +80,27 @@ class ServerAuthorizationTests(unittest.TestCase):
         self.assertFalse(handler._require_csrf({"csrf_token": "correct"}))
         self.assertEqual(handler.responses[-1][1], 403)
 
+    @patch("app.server.get_settings")
+    def test_catalog_sync_requires_bearer_token(self, get_settings: MagicMock) -> None:
+        handler = self.handler()
+        get_settings.return_value.catalog_sync_configured = True
+        get_settings.return_value.catalog_sync_token = "s" * 40
+
+        self.assertFalse(handler._require_catalog_sync())
+        self.assertEqual(handler.responses[-1][1], 401)
+
+        handler.headers = {"Authorization": f"Bearer {'s' * 40}"}
+        self.assertTrue(handler._require_catalog_sync())
+
+    @patch("app.server.get_settings")
+    def test_catalog_sync_stays_closed_when_not_configured(
+        self, get_settings: MagicMock
+    ) -> None:
+        handler = self.handler()
+        get_settings.return_value.catalog_sync_configured = False
+        self.assertFalse(handler._require_catalog_sync())
+        self.assertEqual(handler.responses[-1][1], 503)
+
     @patch("app.server.send_test_email")
     @patch("app.server.get_settings")
     def test_email_smoke_test_targets_current_account(

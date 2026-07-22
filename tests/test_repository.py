@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from app.repository import (
     _crawler_write_data,
+    _sync_write_data,
     merge_recommendation_rows,
     search_terms,
     set_book_rating,
@@ -104,6 +105,30 @@ class RepositorySearchTests(unittest.TestCase):
             _crawler_write_data({"rating_locked": False}, incoming),
             incoming,
         )
+
+    def test_sync_merge_does_not_erase_richer_existing_metadata(self) -> None:
+        existing = {
+            "rating_locked": False,
+            "author": "Known author",
+            "isbn": "9780000000000",
+            "release_date": "2026-07-01",
+            "release_status": "available",
+            "content_rating": "guidance_15",
+            "rating_confidence": 100,
+        }
+        incoming = {
+            "author": None,
+            "isbn": None,
+            "release_date": None,
+            "release_status": "unknown",
+            "content_rating": "unknown",
+            "rating_confidence": 0,
+        }
+        merged = _sync_write_data(existing, incoming)
+        self.assertEqual(merged["author"], "Known author")
+        self.assertEqual(merged["isbn"], "9780000000000")
+        self.assertEqual(merged["release_status"], "available")
+        self.assertEqual(merged["content_rating"], "guidance_15")
 
     def test_manual_rating_emits_catalog_change(self) -> None:
         connection = MagicMock()
