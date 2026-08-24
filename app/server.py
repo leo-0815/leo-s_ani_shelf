@@ -131,7 +131,11 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/series/detail":
                 query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
-                series = get_series(query.get("publisher", ""), query.get("title", ""))
+                series = get_series(
+                    query.get("publisher", ""),
+                    query.get("title", ""),
+                    query.get("media_type", ""),
+                )
                 self._json(
                     series or {"error": "找不到系列"},
                     HTTPStatus.OK if series else HTTPStatus.NOT_FOUND,

@@ -14,12 +14,14 @@ from .models import (
     SYNC_HASH_VERSION,
     normalize_text,
 )
+from .series import canonical_series_title, series_key
 
 
 BOOK_FIELDS = (
     "title",
     "normalized_title",
     "series_title",
+    "series_key",
     "volume_label",
     "edition_type",
     "media_type",
@@ -79,6 +81,7 @@ def upsert_book(
     with transaction() as connection:
         publisher_id = get_publisher_id(connection, record.publisher_code)
         with connection.cursor() as cursor:
+            _apply_series_alias_to_data(cursor, publisher_id, data)
             cursor.execute(
                 "SELECT * FROM books WHERE publisher_id = %s AND source_key = %s FOR UPDATE",
                 (publisher_id, record.source_key),
@@ -112,12 +115,12 @@ def upsert_book(
                     values,
                 )
                 book_id = int(cursor.lastrowid)
-                normalized_series = normalize_text(data.get("series_title") or "").casefold()[:190]
+                normalized_series = data.get("series_key") or ""
                 if normalized_series:
                     cursor.execute(
                         "SELECT 1 FROM followed_series WHERE publisher_id = %s "
-                        "AND normalized_series = %s",
-                        (publisher_id, normalized_series),
+                        "AND normalized_series = %s AND media_type = %s",
+                        (publisher_id, normalized_series, data["media_type"]),
                     )
                     if cursor.fetchone():
                         cursor.execute(
@@ -186,6 +189,23 @@ def upsert_book(
             return "updated"
 
 
+def _apply_series_alias_to_data(
+    cursor: Any,
+    publisher_id: int,
+    data: dict[str, Any],
+) -> None:
+    if not data.get("series_key"):
+        return
+    cursor.execute(
+        "SELECT canonical_key FROM series_aliases WHERE publisher_id = %s "
+        "AND alias_key = %s AND approved = TRUE",
+        (publisher_id, data["series_key"]),
+    )
+    alias = cursor.fetchone()
+    if alias:
+        data["series_key"] = alias["canonical_key"]
+
+
 def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     result = dict(data)
     if existing.get("rating_locked"):
@@ -199,6 +219,7 @@ def _sync_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str
     result = _crawler_write_data(existing, data)
     for field in {
         "series_title",
+        "series_key",
         "volume_label",
         "author",
         "isbn",
@@ -295,13 +316,13 @@ def _find_tongli_matching_row(
     cursor.execute(
         "SELECT * FROM books WHERE publisher_id = %s AND media_type = %s "
         "AND (normalized_title = %s OR "
-        "(series_title = %s AND COALESCE(volume_label, '') = COALESCE(%s, ''))) "
+        "(series_key = %s AND COALESCE(volume_label, '') = COALESCE(%s, ''))) "
         "FOR UPDATE",
         (
             publisher_id,
             data["media_type"],
             data["normalized_title"],
-            data.get("series_title"),
+            data.get("series_key"),
             data.get("volume_label"),
         ),
     )
@@ -405,7 +426,8 @@ def list_books(filters: dict[str, str], limit: int = 100, offset: int = 0) -> di
                 "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
                 "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
                 "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.publisher_id = b.publisher_id "
-                "AND fs.normalized_series = LEFT(LOWER(b.series_title), 190)) AS series_following "
+                "AND fs.normalized_series = b.series_key "
+                "AND fs.media_type = b.media_type) AS series_following "
                 + base
                 + clause
                 + f" ORDER BY {order_by} "
@@ -431,7 +453,8 @@ def get_book(book_id: int) -> dict[str, Any] | None:
                 "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
                 "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
                 "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.publisher_id = b.publisher_id "
-                "AND fs.normalized_series = LEFT(LOWER(b.series_title), 190)) AS series_following "
+                "AND fs.normalized_series = b.series_key "
+                "AND fs.media_type = b.media_type) AS series_following "
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                 "LEFT JOIN wishlist_items w ON w.book_id = b.id WHERE b.id = %s",
                 (book_id,),
@@ -554,12 +577,13 @@ def list_recommendations(limit: int = 60) -> dict[str, Any]:
                 "FROM wishlist_items sw "
                 "JOIN books seed ON seed.id = sw.book_id "
                 "JOIN books c ON c.publisher_id = seed.publisher_id "
-                "AND c.series_title = seed.series_title AND c.id <> seed.id "
+                "AND c.series_key = seed.series_key AND c.media_type = seed.media_type "
+                "AND c.id <> seed.id "
                 "JOIN publishers p ON p.id = c.publisher_id "
                 "LEFT JOIN wishlist_items cw ON cw.book_id = c.id "
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id "
                 "WHERE sw.state = 'purchased' "
-                "AND seed.series_title IS NOT NULL AND seed.series_title <> '' "
+                "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
                 "AND cw.book_id IS NULL AND rd.book_id IS NULL "
                 "ORDER BY sw.updated_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
@@ -577,7 +601,8 @@ def list_recommendations(limit: int = 60) -> dict[str, Any]:
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id "
                 "WHERE sw.state = 'purchased' "
                 "AND seed.author IS NOT NULL AND seed.author <> '' "
-                "AND COALESCE(c.series_title, '') <> COALESCE(seed.series_title, '') "
+                "AND NOT (COALESCE(c.series_key, '') = COALESCE(seed.series_key, '') "
+                "AND c.media_type = seed.media_type) "
                 "AND c.normalized_title <> seed.normalized_title "
                 "AND cw.book_id IS NULL AND rd.book_id IS NULL "
                 "ORDER BY sw.updated_at DESC, "
@@ -593,7 +618,7 @@ def list_recommendations(limit: int = 60) -> dict[str, Any]:
                 "'followed_series' AS recommendation_type "
                 "FROM followed_series fs "
                 "JOIN books c ON c.publisher_id = fs.publisher_id "
-                "AND c.series_title = fs.series_title "
+                "AND c.series_key = fs.normalized_series AND c.media_type = fs.media_type "
                 "JOIN publishers p ON p.id = c.publisher_id "
                 "LEFT JOIN wishlist_items cw ON cw.book_id = c.id "
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id "
@@ -608,25 +633,27 @@ def list_recommendations(limit: int = 60) -> dict[str, Any]:
             followed_count = int(cursor.fetchone()["followed_count"])
             cursor.execute(
                 "SELECT p.code AS publisher_code, p.name AS publisher_name, "
-                "seed.series_title, seed.media_type, "
+                "MIN(seed.series_title) AS series_title, seed.media_type, "
                 "COUNT(DISTINCT seed.id) AS purchased_count, "
                 "(SELECT COUNT(*) FROM books all_books "
                 " WHERE all_books.publisher_id = seed.publisher_id "
-                " AND all_books.series_title = seed.series_title) AS book_count, "
+                " AND all_books.series_key = seed.series_key "
+                " AND all_books.media_type = seed.media_type) AS book_count, "
                 "(SELECT COUNT(*) FROM books scheduled_books "
                 " WHERE scheduled_books.publisher_id = seed.publisher_id "
-                " AND scheduled_books.series_title = seed.series_title "
+                " AND scheduled_books.series_key = seed.series_key "
+                " AND scheduled_books.media_type = seed.media_type "
                 " AND scheduled_books.release_status = 'scheduled') AS scheduled_count "
                 "FROM wishlist_items sw "
                 "JOIN books seed ON seed.id = sw.book_id "
                 "JOIN publishers p ON p.id = seed.publisher_id "
                 "LEFT JOIN followed_series fs ON fs.publisher_id = seed.publisher_id "
-                "AND fs.series_title = seed.series_title "
+                "AND fs.normalized_series = seed.series_key AND fs.media_type = seed.media_type "
                 "WHERE sw.state = 'purchased' "
-                "AND seed.series_title IS NOT NULL AND seed.series_title <> '' "
+                "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
                 "AND fs.publisher_id IS NULL "
                 "GROUP BY seed.publisher_id, p.code, p.name, "
-                "seed.series_title, seed.media_type "
+                "seed.series_key, seed.media_type "
                 "ORDER BY MAX(sw.updated_at) DESC LIMIT 20"
             )
             series_prompts = [serialize_row(row) for row in cursor.fetchall()]
@@ -708,7 +735,8 @@ def list_book_recommendations(book_id: int, limit: int = 8) -> list[dict[str, An
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id, publisher_id, title, series_title, volume_label, author "
+                "SELECT id, publisher_id, title, series_title, series_key, media_type, "
+                "volume_label, author "
                 "FROM books WHERE id = %s",
                 (book_id,),
             )
@@ -717,17 +745,21 @@ def list_book_recommendations(book_id: int, limit: int = 8) -> list[dict[str, An
                 raise KeyError("找不到指定書目")
             series_rows: list[dict[str, Any]] = []
             author_rows: list[dict[str, Any]] = []
-            if seed["series_title"]:
+            if seed["series_key"]:
                 cursor.execute(
                     "SELECT c.*, p.code AS publisher_code, p.name AS publisher_name "
                     "FROM books c JOIN publishers p ON p.id = c.publisher_id "
                     "LEFT JOIN wishlist_items w ON w.book_id = c.id "
                     "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id "
-                    "WHERE c.publisher_id = %s AND c.series_title = %s AND c.id <> %s "
+                    "WHERE c.publisher_id = %s AND c.series_key = %s "
+                    "AND c.media_type = %s AND c.id <> %s "
                     "AND w.book_id IS NULL AND rd.book_id IS NULL "
                     "ORDER BY (c.release_status = 'scheduled') DESC, "
                     "c.release_date DESC LIMIT %s",
-                    (seed["publisher_id"], seed["series_title"], book_id, query_limit),
+                    (
+                        seed["publisher_id"], seed["series_key"], seed["media_type"],
+                        book_id, query_limit,
+                    ),
                 )
                 series_rows = cursor.fetchall()
                 for row in series_rows:
@@ -745,11 +777,12 @@ def list_book_recommendations(book_id: int, limit: int = 8) -> list[dict[str, An
                     "LEFT JOIN wishlist_items w ON w.book_id = c.id "
                     "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id "
                     "WHERE c.author = %s AND c.id <> %s "
-                    "AND COALESCE(c.series_title, '') <> COALESCE(%s, '') "
+                    "AND NOT (COALESCE(c.series_key, '') = COALESCE(%s, '') "
+                    "AND c.media_type = %s) "
                     "AND w.book_id IS NULL AND rd.book_id IS NULL "
                     "ORDER BY (c.release_status = 'scheduled') DESC, "
                     "c.release_date DESC LIMIT %s",
-                    (seed["author"], book_id, seed["series_title"], query_limit),
+                    (seed["author"], book_id, seed["series_key"], seed["media_type"], query_limit),
                 )
                 author_rows = cursor.fetchall()
                 for row in author_rows:
@@ -784,13 +817,13 @@ def clear_recommendation_dismissals() -> None:
 
 def _set_followed_series_for_book(cursor: Any, book_id: int, following: bool) -> None:
     cursor.execute(
-        "SELECT publisher_id, series_title, media_type FROM books WHERE id = %s",
+        "SELECT publisher_id, series_title, series_key, media_type FROM books WHERE id = %s",
         (book_id,),
     )
     book = cursor.fetchone()
     if not book or not book["series_title"]:
         return
-    normalized = normalize_text(book["series_title"]).casefold()[:190]
+    normalized = book["series_key"] or series_key(book["series_title"])
     if following:
         cursor.execute(
             "INSERT INTO followed_series "
@@ -802,13 +835,14 @@ def _set_followed_series_for_book(cursor: Any, book_id: int, following: bool) ->
         cursor.execute(
             "INSERT IGNORE INTO wishlist_items (book_id, state, follow_series) "
             "SELECT id, 'wanted', FALSE FROM books WHERE publisher_id = %s "
-            "AND LEFT(LOWER(series_title), 190) = %s AND release_status = 'scheduled'",
-            (book["publisher_id"], normalized),
+            "AND series_key = %s AND media_type = %s AND release_status = 'scheduled'",
+            (book["publisher_id"], normalized, book["media_type"]),
         )
     else:
         cursor.execute(
-            "DELETE FROM followed_series WHERE publisher_id = %s AND normalized_series = %s",
-            (book["publisher_id"], normalized),
+            "DELETE FROM followed_series WHERE publisher_id = %s AND normalized_series = %s "
+            "AND media_type = %s",
+            (book["publisher_id"], normalized, book["media_type"]),
         )
 
 
@@ -845,8 +879,8 @@ def stats() -> dict[str, int]:
                 "SELECT COUNT(*) AS purchased, "
                 "SUM(w.owned_format IN ('paper', 'both')) AS purchased_paper, "
                 "SUM(w.owned_format IN ('digital', 'both')) AS purchased_digital, "
-                "COUNT(DISTINCT CASE WHEN b.series_title IS NOT NULL AND b.series_title <> '' "
-                "THEN CONCAT(b.publisher_id, ':', b.series_title) END) AS purchased_series, "
+                "COUNT(DISTINCT CASE WHEN b.series_key IS NOT NULL AND b.series_key <> '' "
+                "THEN CONCAT(b.publisher_id, ':', b.series_key, ':', b.media_type) END) AS purchased_series, "
                 "COALESCE(SUM(w.paid_price), 0) AS purchased_spend "
                 "FROM wishlist_items w JOIN books b ON b.id = w.book_id "
                 "WHERE w.state = 'purchased'"
@@ -860,7 +894,7 @@ def list_series(
     limit: int = 100,
     offset: int = 0,
 ) -> dict[str, Any]:
-    where = ["b.series_title IS NOT NULL", "b.series_title <> ''"]
+    where = ["b.series_key IS NOT NULL", "b.series_key <> ''"]
     values: list[Any] = []
     if filters.get("q"):
         for term in search_terms(filters["q"]):
@@ -874,16 +908,20 @@ def list_series(
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT COUNT(*) AS total FROM ("
-                "SELECT b.publisher_id, b.series_title, b.media_type "
+                "SELECT b.publisher_id, b.series_key, b.media_type "
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
-                f"WHERE {clause} GROUP BY b.publisher_id, b.series_title, b.media_type"
+                f"WHERE {clause} GROUP BY b.publisher_id, b.series_key, b.media_type"
                 ") grouped_series",
                 values,
             )
             total = int(cursor.fetchone()["total"])
             cursor.execute(
-                "SELECT p.code AS publisher_code, p.name AS publisher_name, b.series_title, "
-                "b.media_type, COUNT(*) AS book_count, "
+                "SELECT p.code AS publisher_code, p.name AS publisher_name, "
+                "COALESCE((SELECT MIN(sa.canonical_title) FROM series_aliases sa "
+                "WHERE sa.publisher_id = b.publisher_id AND sa.canonical_key = b.series_key "
+                "AND sa.approved = TRUE), MIN(b.series_title)) AS series_title, b.series_key, "
+                "b.media_type, "
+                "COUNT(*) AS book_count, "
                 "COUNT(DISTINCT b.volume_label) AS volume_count, "
                 "MIN(b.release_date) AS first_date, MAX(b.release_date) AS last_date, "
                 "SUM(b.release_status = 'scheduled') AS scheduled_count, "
@@ -894,21 +932,39 @@ def list_series(
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                 "LEFT JOIN wishlist_items w ON w.book_id = b.id "
                 "LEFT JOIN followed_series fs ON fs.publisher_id = b.publisher_id "
-                "AND fs.normalized_series = LEFT(LOWER(b.series_title), 190) "
-                f"WHERE {clause} GROUP BY p.id, p.code, p.name, b.series_title, b.media_type "
-                "ORDER BY MAX(b.release_date) DESC, b.series_title LIMIT %s OFFSET %s",
+                "AND fs.normalized_series = b.series_key AND fs.media_type = b.media_type "
+                f"WHERE {clause} GROUP BY p.id, p.code, p.name, b.series_key, b.media_type "
+                "ORDER BY MAX(b.release_date) DESC, MIN(b.series_title) LIMIT %s OFFSET %s",
                 [*values, min(max(limit, 1), 200), max(offset, 0)],
             )
             items = [serialize_row(row) for row in cursor.fetchall()]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
-def get_series(publisher_code: str, series_title: str) -> dict[str, Any] | None:
-    result = list_books(
-        {"publisher": publisher_code, "q": series_title, "sort": "release_asc"},
-        limit=200,
-    )
-    exact = [item for item in result["items"] if item["series_title"] == series_title]
+def get_series(
+    publisher_code: str,
+    series_title: str,
+    media_type: str = "",
+) -> dict[str, Any] | None:
+    requested_key = series_key(series_title, publisher_code)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT b.*, p.code AS publisher_code, p.name AS publisher_name, "
+                "w.state AS wishlist_state, w.notes AS wishlist_notes, w.follow_series, "
+                "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
+                "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
+                "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
+                "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.publisher_id = b.publisher_id "
+                "AND fs.normalized_series = b.series_key "
+                "AND fs.media_type = b.media_type) AS series_following "
+                "FROM books b JOIN publishers p ON p.id = b.publisher_id "
+                "LEFT JOIN wishlist_items w ON w.book_id = b.id "
+                "WHERE p.code = %s AND b.series_key = %s AND (%s = '' OR b.media_type = %s) "
+                "ORDER BY (b.release_date IS NULL), b.release_date, b.title",
+                (publisher_code, requested_key, media_type, media_type),
+            )
+            exact = [serialize_row(item) for item in cursor.fetchall()]
     if not exact:
         return None
     numeric_volumes = sorted(
@@ -926,7 +982,8 @@ def get_series(publisher_code: str, series_title: str) -> dict[str, Any] | None:
     return {
         "publisher_code": publisher_code,
         "publisher_name": exact[0]["publisher_name"],
-        "series_title": series_title,
+        "series_title": canonical_series_title(series_title, publisher_code),
+        "series_key": requested_key,
         "media_type": exact[0]["media_type"],
         "numeric_volumes": numeric_volumes,
         "missing_volumes": missing_volumes,
@@ -940,7 +997,7 @@ def set_series_follow(
     media_type: str,
     following: bool,
 ) -> None:
-    normalized = normalize_text(series_title).casefold()[:190]
+    normalized = series_key(series_title, publisher_code)
     if not normalized:
         raise ValueError("系列名稱不可為空")
     with transaction() as connection:
@@ -952,20 +1009,25 @@ def set_series_follow(
                     "(publisher_id, series_title, normalized_series, media_type) "
                     "VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE "
                     "series_title = VALUES(series_title), media_type = VALUES(media_type)",
-                    (publisher_id, series_title[:500], normalized, media_type[:40]),
+                    (
+                        publisher_id,
+                        canonical_series_title(series_title, publisher_code)[:500],
+                        normalized,
+                        media_type[:40],
+                    ),
                 )
                 cursor.execute(
                     "INSERT IGNORE INTO wishlist_items (book_id, state, follow_series) "
                     "SELECT id, 'wanted', FALSE FROM books WHERE publisher_id = %s "
-                    "AND LEFT(LOWER(series_title), 190) = %s "
+                    "AND series_key = %s AND media_type = %s "
                     "AND release_status = 'scheduled'",
-                    (publisher_id, normalized),
+                    (publisher_id, normalized, media_type),
                 )
             else:
                 cursor.execute(
                     "DELETE FROM followed_series WHERE publisher_id = %s "
-                    "AND normalized_series = %s",
-                    (publisher_id, normalized),
+                    "AND normalized_series = %s AND media_type = %s",
+                    (publisher_id, normalized, media_type),
                 )
 
 
@@ -1040,7 +1102,8 @@ def export_catalog(
                     "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
                     "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
                     "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.publisher_id = b.publisher_id "
-                    "AND fs.normalized_series = LEFT(LOWER(b.series_title), 190)) AS series_following "
+                    "AND fs.normalized_series = b.series_key "
+                    "AND fs.media_type = b.media_type) AS series_following "
                     "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                     f"LEFT JOIN wishlist_items w ON w.book_id = b.id {where} "
                     "ORDER BY b.release_date DESC"
@@ -1059,11 +1122,21 @@ def rebuild_book_metadata() -> int:
     """Recalculate lightweight title-derived fields after parser improvements."""
     with transaction() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id, title FROM books")
+            cursor.execute(
+                "SELECT b.id, b.title, b.series_title, p.code AS publisher_code FROM books b "
+                "JOIN publishers p ON p.id = b.publisher_id"
+            )
             rows = cursor.fetchall()
             values = [
                 (
-                    infer_series_title(row["title"]),
+                    canonical_series_title(
+                        row["series_title"] or infer_series_title(row["title"]),
+                        row["publisher_code"],
+                    ),
+                    series_key(
+                        row["series_title"] or infer_series_title(row["title"]),
+                        row["publisher_code"],
+                    ),
                     extract_volume(row["title"]),
                     detect_edition(row["title"]),
                     row["id"],
@@ -1071,9 +1144,15 @@ def rebuild_book_metadata() -> int:
                 for row in rows
             ]
             cursor.executemany(
-                "UPDATE books SET series_title = %s, volume_label = %s, edition_type = %s "
+                "UPDATE books SET series_title = %s, series_key = %s, volume_label = %s, edition_type = %s "
                 "WHERE id = %s",
                 values,
+            )
+            cursor.execute(
+                "UPDATE books b JOIN series_aliases sa "
+                "ON sa.publisher_id = b.publisher_id AND sa.alias_key = b.series_key "
+                "SET b.series_key = sa.canonical_key WHERE sa.approved = TRUE "
+                "AND b.series_key <> sa.canonical_key"
             )
     return len(values)
 
