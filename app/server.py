@@ -148,7 +148,10 @@ class Handler(BaseHTTPRequestHandler):
                 query = parse_qs(parsed.query)
                 self._download(
                     json.dumps(
-                        export_catalog(query.get("wishlist", ["0"])[0] == "1"),
+                        export_catalog(
+                            query.get("wishlist", ["0"])[0] == "1",
+                            query.get("collection", ["0"])[0] == "1",
+                        ),
                         ensure_ascii=False,
                         indent=2,
                         default=str,
@@ -158,7 +161,10 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/export.csv":
                 query = parse_qs(parsed.query)
-                self._export_csv(query.get("wishlist", ["0"])[0] == "1")
+                self._export_csv(
+                    query.get("wishlist", ["0"])[0] == "1",
+                    query.get("collection", ["0"])[0] == "1",
+                )
             elif parsed.path == "/api/calendar.ics":
                 query = parse_qs(parsed.query)
                 self._export_calendar(int(query.get("days", ["90"])[0]))
@@ -216,6 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("order_number", "")),
                     int(payload["paid_price"]) if str(payload.get("paid_price", "")).isdigit() else None,
                     str(payload.get("owned_format", "paper")),
+                    str(payload.get("purchased_at", "")) or None,
                 )
                 self._json({"ok": True})
             else:
@@ -302,8 +309,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _export_csv(self, wishlist_only: bool) -> None:
-        data = export_catalog(wishlist_only)
+    def _export_csv(self, wishlist_only: bool, collection_only: bool = False) -> None:
+        data = export_catalog(wishlist_only, collection_only)
         output = io.StringIO()
         fields = [
             "publisher_name",
@@ -323,6 +330,7 @@ class Handler(BaseHTTPRequestHandler):
             "wishlist_order_number",
             "wishlist_paid_price",
             "wishlist_format",
+            "wishlist_purchased_at",
             "source_url",
         ]
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
@@ -331,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
         self._download(
             ("\ufeff" + output.getvalue()).encode("utf-8"),
             "text/csv; charset=utf-8",
-            "anishelf-export.csv",
+            "anishelf-collection.csv" if collection_only else "anishelf-export.csv",
         )
 
     def _export_calendar(self, days: int) -> None:

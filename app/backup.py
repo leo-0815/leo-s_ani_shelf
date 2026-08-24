@@ -33,6 +33,7 @@ def restore_export(path: Path) -> dict[str, int]:
                     str(item.get("wishlist_order_number") or ""),
                     int(item["wishlist_paid_price"]) if item.get("wishlist_paid_price") is not None else None,
                     str(item.get("wishlist_format") or "paper"),
+                    str(item.get("wishlist_purchased_at") or "") or None,
                 )
                 totals["wishlist"] += 1
         except Exception:
