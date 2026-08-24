@@ -13,7 +13,10 @@ class CloudSchemaTests(unittest.TestCase):
     def test_personal_tables_are_scoped_by_user(self) -> None:
         self.assertIn("PRIMARY KEY (user_id, book_id)", self.schema)
         self.assertIn("purchased_at DATE NULL", self.schema)
-        self.assertIn("PRIMARY KEY (user_id, publisher_id, normalized_series)", self.schema)
+        self.assertIn(
+            "PRIMARY KEY (user_id, publisher_id, normalized_series, media_type)",
+            self.schema,
+        )
         self.assertIn("fk_recommendation_dismissal_user", self.schema)
 
     def test_sessions_reference_users_and_store_hashes(self) -> None:

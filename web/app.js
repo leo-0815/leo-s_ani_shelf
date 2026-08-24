@@ -111,7 +111,7 @@ function releaseLabel(book) {
 }
 
 const statusLabels = {scheduled: "預定出版", available: "已上市", delayed: "延期", cancelled: "取消", unknown: "資料缺日期"};
-const typeLabels = {manga: "漫畫", novel: "輕小說", unknown: "未分類"};
+const typeLabels = {manga: "漫畫", novel: "輕小說", mixed: "漫畫／輕小說", unknown: "未分類"};
 const editionLabels = {standard: "一般版", special: "特裝版", limited: "限定版", deluxe: "豪華限定版", first_print: "首刷限定", bonus: "特典版", bundle: "同捆版", digital: "電子版", collector: "收藏版"};
 const wishlistLabels = {wanted: "想買", preordered: "已預購", purchased: "已購入", paused: "暫不購買"};
 const issueLabels = {missing_author: "缺作者", missing_isbn: "缺 ISBN", missing_date: "缺日期", unknown_type: "類型未定", suspicious_date: "可疑舊日期"};
@@ -332,7 +332,7 @@ async function openDetail(bookId) {
     $("#removeWishlist")?.addEventListener("click", removeWishlist);
     $("#openBookSeries").addEventListener("click", () => {
       $("#detailDialog").close();
-      openSeriesByValues(book.publisher_code, book.series_title);
+      openSeriesByValues(book.publisher_code, book.series_title, book.media_type);
     });
     $$("[data-related-book]").forEach(card => card.addEventListener("click", event => {
       if (!event.target.closest("[data-related-want]")) openDetail(Number(card.dataset.relatedBook));
@@ -461,19 +461,19 @@ async function toggleSeriesFollow(index) {
 
 function openSeries(index) {
   const series = state.series[index];
-  openSeriesByValues(series.publisher_code, series.series_title);
+  openSeriesByValues(series.publisher_code, series.series_title, series.media_type);
 }
 
-async function openSeriesByValues(publisher, title) {
+async function openSeriesByValues(publisher, title, mediaType) {
   if (!title) return;
   try {
-    const params = new URLSearchParams({publisher, title});
+    const params = new URLSearchParams({publisher, title, media_type: mediaType || ""});
     const series = await api(`/api/series/detail?${params}`);
     state.currentSeries = series;
     $("#seriesDetailContent").innerHTML = `<div class="series-detail">
       <p class="eyebrow">${escapeHtml(series.publisher_name)} · ${escapeHtml(typeLabels[series.media_type] || "未分類")}</p>
       <h2>${escapeHtml(series.series_title)}</h2>
-      <p class="detail-sub">同一系列的集數、一般版與限定版集中顯示。</p>
+      <p class="detail-sub">同一媒體類型的集數、一般版與限定版集中顯示。</p>
       ${series.missing_volumes?.length ? `<div class="missing-volumes">可能缺少集數：${series.missing_volumes.map(String).join("、")}</div>` : ""}
       <div class="series-book-list">${series.items.map(book => `<button class="series-book-row" data-series-book="${book.id}">
         <span class="volume-box">${escapeHtml(book.volume_label || "—")}</span>
@@ -572,7 +572,7 @@ function renderRecommendations(purchasedCount, followedCount) {
   }));
   $$("[data-recommend-series]").forEach(button => button.addEventListener("click", () => {
     const series = state.recommendationSeries[Number(button.dataset.recommendSeries)];
-    openSeriesByValues(series.publisher_code, series.series_title);
+    openSeriesByValues(series.publisher_code, series.series_title, series.media_type);
   }));
 }
 

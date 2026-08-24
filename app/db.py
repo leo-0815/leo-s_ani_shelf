@@ -246,6 +246,13 @@ def ensure_schema() -> None:
                 "idx_books_rating",
                 "(`content_rating`, `rating_locked`)",
             )
+            _ensure_column(cursor, "books", "series_key", "VARCHAR(190) NULL")
+            _ensure_index(cursor, "books", "idx_books_series", "(`publisher_id`, `series_key`)")
+            _ensure_followed_series_media_primary(cursor)
+            _backfill_series_keys(cursor)
+            _migrate_followed_series_keys(cursor)
+            _seed_series_aliases(cursor)
+            _apply_approved_series_aliases(cursor)
 
 
 def _ensure_column(cursor: Any, table: str, column: str, definition: str) -> None:
@@ -266,6 +273,116 @@ def _ensure_index(cursor: Any, table: str, index: str, columns: str) -> None:
     )
     if not cursor.fetchone()["present"]:
         cursor.execute(f"ALTER TABLE `{table}` ADD INDEX `{index}` {columns}")
+
+
+def _ensure_followed_series_media_primary(cursor: Any) -> None:
+    cursor.execute(
+        "SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index) AS columns_list "
+        "FROM information_schema.statistics WHERE table_schema = DATABASE() "
+        "AND table_name = 'followed_series' AND index_name = 'PRIMARY'"
+    )
+    columns = str(cursor.fetchone().get("columns_list") or "")
+    if columns != "user_id,publisher_id,normalized_series,media_type":
+        cursor.execute(
+            "ALTER TABLE followed_series DROP PRIMARY KEY, "
+            "ADD PRIMARY KEY (user_id, publisher_id, normalized_series, media_type)"
+        )
+
+
+def _backfill_series_keys(cursor: Any) -> None:
+    from .series import canonical_series_title, series_key
+
+    cursor.execute(
+        "SELECT b.id, b.series_title, p.code AS publisher_code FROM books b "
+        "JOIN publishers p ON p.id = b.publisher_id "
+        "WHERE b.series_title IS NOT NULL AND b.series_title <> '' "
+        "AND (b.series_key IS NULL OR b.series_key = '')"
+    )
+    values = [
+        (
+            canonical_series_title(row["series_title"], row["publisher_code"]),
+            series_key(row["series_title"], row["publisher_code"]),
+            row["id"],
+        )
+        for row in cursor.fetchall()
+    ]
+    if values:
+        cursor.executemany(
+            "UPDATE books SET series_title = %s, series_key = %s WHERE id = %s",
+            values,
+        )
+
+
+def _migrate_followed_series_keys(cursor: Any) -> None:
+    from .series import canonical_series_title, series_key
+
+    cursor.execute(
+        "SELECT fs.user_id, fs.publisher_id, fs.series_title, fs.normalized_series, fs.media_type, "
+        "p.code AS publisher_code FROM followed_series fs "
+        "JOIN publishers p ON p.id = fs.publisher_id"
+    )
+    for row in cursor.fetchall():
+        new_key = series_key(row["series_title"], row["publisher_code"])
+        if not new_key or new_key == row["normalized_series"]:
+            continue
+        cursor.execute(
+            "INSERT INTO followed_series "
+            "(user_id, publisher_id, series_title, normalized_series, media_type) "
+            "VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE "
+            "series_title = VALUES(series_title), media_type = VALUES(media_type)",
+            (
+                row["user_id"], row["publisher_id"],
+                canonical_series_title(row["series_title"], row["publisher_code"]),
+                new_key,
+                row["media_type"],
+            ),
+        )
+        cursor.execute(
+            "DELETE FROM followed_series WHERE user_id = %s AND publisher_id = %s "
+            "AND normalized_series = %s AND media_type = %s",
+            (
+                row["user_id"], row["publisher_id"],
+                row["normalized_series"], row["media_type"],
+            ),
+        )
+
+
+def _apply_approved_series_aliases(cursor: Any) -> None:
+    cursor.execute(
+        "UPDATE books b JOIN series_aliases sa "
+        "ON sa.publisher_id = b.publisher_id AND sa.alias_key = b.series_key "
+        "SET b.series_key = sa.canonical_key WHERE sa.approved = TRUE "
+        "AND b.series_key <> sa.canonical_key"
+    )
+
+
+def _seed_series_aliases(cursor: Any) -> None:
+    from .series import SERIES_ALIAS_GROUPS, series_alias_key, series_key
+
+    for group in SERIES_ALIAS_GROUPS:
+        if not group.publisher_code:
+            continue
+        cursor.execute("SELECT id FROM publishers WHERE code = %s", (group.publisher_code,))
+        publisher = cursor.fetchone()
+        if not publisher:
+            continue
+        canonical_key = series_key(group.canonical, group.publisher_code)
+        for alias in (group.canonical, *group.aliases):
+            cursor.execute(
+                "INSERT INTO series_aliases "
+                "(publisher_id, alias_key, canonical_title, canonical_key, "
+                "match_method, confidence, approved) VALUES (%s, %s, %s, %s, "
+                "'dictionary', 100, TRUE) ON DUPLICATE KEY UPDATE "
+                "canonical_title = VALUES(canonical_title), "
+                "canonical_key = VALUES(canonical_key), match_method = 'dictionary', "
+                "confidence = 100, approved = TRUE",
+                (
+                    publisher["id"],
+                    series_alias_key(alias),
+                    group.canonical,
+                    canonical_key,
+                ),
+            )
 
 
 def ping() -> dict[str, Any]:
