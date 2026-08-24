@@ -316,7 +316,7 @@ def _ensure_followed_series_media_primary(cursor: Any) -> None:
         cursor.execute("DROP TABLE followed_series_legacy")
 
 
-def _backfill_series_keys(cursor: Any) -> None:
+def _backfill_series_keys(cursor: Any, batch_size: int = 250) -> None:
     from .series import canonical_series_title, series_key
 
     cursor.execute(
@@ -333,10 +333,23 @@ def _backfill_series_keys(cursor: Any) -> None:
         )
         for row in cursor.fetchall()
     ]
-    if values:
-        cursor.executemany(
-            "UPDATE books SET series_title = %s, series_key = %s WHERE id = %s",
-            values,
+    for start in range(0, len(values), max(1, batch_size)):
+        batch = values[start : start + max(1, batch_size)]
+        title_cases = " ".join("WHEN %s THEN %s" for _ in batch)
+        key_cases = " ".join("WHEN %s THEN %s" for _ in batch)
+        placeholders = ", ".join(["%s"] * len(batch))
+        parameters: list[Any] = []
+        for title, _key, book_id in batch:
+            parameters.extend((book_id, title))
+        for _title, key, book_id in batch:
+            parameters.extend((book_id, key))
+        parameters.extend(book_id for _title, _key, book_id in batch)
+        cursor.execute(
+            "UPDATE books SET "
+            f"series_title = CASE id {title_cases} ELSE series_title END, "
+            f"series_key = CASE id {key_cases} ELSE series_key END "
+            f"WHERE id IN ({placeholders})",
+            parameters,
         )
 
 

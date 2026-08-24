@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app.config import Settings
 from app.db import (
     DatabaseUnavailable,
+    _backfill_series_keys,
     _ensure_followed_series_media_primary,
     _ensure_index,
     close_connection_pools,
@@ -99,6 +100,20 @@ class DatabaseTlsTests(unittest.TestCase):
 
 
 class DatabaseMigrationTests(unittest.TestCase):
+    def test_series_backfill_batches_updates_for_remote_tidb(self) -> None:
+        cursor = unittest.mock.MagicMock()
+        cursor.fetchall.return_value = [
+            {"id": 1, "series_title": "作品 1", "publisher_code": "tongli"},
+            {"id": 2, "series_title": "作品 2", "publisher_code": "tongli"},
+        ]
+
+        _backfill_series_keys(cursor, batch_size=1)
+
+        self.assertEqual(cursor.execute.call_count, 3)
+        self.assertIn("UPDATE books SET", cursor.execute.call_args_list[1].args[0])
+        self.assertIn("CASE id", cursor.execute.call_args_list[1].args[0])
+        cursor.executemany.assert_not_called()
+
     def test_followed_series_primary_key_is_rebuilt_for_tidb(self) -> None:
         cursor = unittest.mock.MagicMock()
         cursor.fetchone.return_value = {
