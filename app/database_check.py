@@ -27,6 +27,12 @@ def run_database_smoke_test() -> dict[str, Any]:
             coverage = cursor.fetchone()
             cursor.execute("SELECT MIN(id) AS id FROM users WHERE is_active = TRUE")
             user = cursor.fetchone()
+            cursor.execute(
+                "SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index) AS columns_list "
+                "FROM information_schema.statistics WHERE table_schema = DATABASE() "
+                "AND table_name = 'followed_series' AND index_name = 'PRIMARY'"
+            )
+            followed_primary = str(cursor.fetchone()["columns_list"] or "")
     finally:
         connection.close()
 
@@ -37,6 +43,7 @@ def run_database_smoke_test() -> dict[str, Any]:
         "books": book_count,
         "books_with_series_title": int(coverage["with_series_title"] or 0),
         "books_with_series_key": int(coverage["with_series_key"] or 0),
+        "followed_series_primary_key": followed_primary,
     }
     if user and user.get("id"):
         try:

@@ -21,6 +21,7 @@ class DatabaseSmokeTestTests(unittest.TestCase):
             {"count": 9220},
             {"with_series_title": 8000, "with_series_key": 7990},
             {"id": 2},
+            {"columns_list": "user_id,publisher_id,normalized_series,media_type"},
         ]
         connection = connect.return_value
         connection.cursor.return_value.__enter__.return_value = cursor
@@ -33,7 +34,8 @@ class DatabaseSmokeTestTests(unittest.TestCase):
         self.assertEqual(result["books"], 9220)
         self.assertEqual(result["books_with_series_key"], 7990)
         self.assertEqual(result["series_query_total"], 1234)
-        self.assertEqual(cursor.execute.call_count, 5)
+        self.assertEqual(result["followed_series_primary_key"], "user_id,publisher_id,normalized_series,media_type")
+        self.assertEqual(cursor.execute.call_count, 6)
         list_series.assert_called_once_with({}, 2, limit=1)
         connection.close.assert_called_once_with()
 
