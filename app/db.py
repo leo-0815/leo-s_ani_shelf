@@ -283,10 +283,37 @@ def _ensure_followed_series_media_primary(cursor: Any) -> None:
     )
     columns = str(cursor.fetchone().get("columns_list") or "")
     if columns != "user_id,publisher_id,normalized_series,media_type":
+        # TiDB cannot replace an existing primary key with ALTER TABLE. Rebuild
+        # this tiny per-user table and atomically swap it into place instead.
+        cursor.execute("DROP TABLE IF EXISTS followed_series_rebuild")
         cursor.execute(
-            "ALTER TABLE followed_series DROP PRIMARY KEY, "
-            "ADD PRIMARY KEY (user_id, publisher_id, normalized_series, media_type)"
+            "CREATE TABLE followed_series_rebuild ("
+            "user_id BIGINT UNSIGNED NOT NULL, "
+            "publisher_id BIGINT UNSIGNED NOT NULL, "
+            "series_title VARCHAR(500) NOT NULL, "
+            "normalized_series VARCHAR(190) NOT NULL, "
+            "media_type VARCHAR(40) NOT NULL DEFAULT 'unknown', "
+            "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "PRIMARY KEY (user_id, publisher_id, normalized_series, media_type), "
+            "KEY idx_followed_series_publisher (publisher_id), "
+            "CONSTRAINT fk_followed_series_rebuild_user FOREIGN KEY (user_id) "
+            "REFERENCES users(id) ON DELETE CASCADE, "
+            "CONSTRAINT fk_followed_series_rebuild_publisher FOREIGN KEY (publisher_id) "
+            "REFERENCES publishers(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
+            "COLLATE=utf8mb4_0900_ai_ci"
         )
+        cursor.execute(
+            "INSERT IGNORE INTO followed_series_rebuild "
+            "(user_id, publisher_id, series_title, normalized_series, media_type, created_at) "
+            "SELECT user_id, publisher_id, series_title, normalized_series, "
+            "COALESCE(NULLIF(media_type, ''), 'unknown'), created_at FROM followed_series"
+        )
+        cursor.execute("DROP TABLE IF EXISTS followed_series_legacy")
+        cursor.execute(
+            "RENAME TABLE followed_series TO followed_series_legacy, "
+            "followed_series_rebuild TO followed_series"
+        )
+        cursor.execute("DROP TABLE followed_series_legacy")
 
 
 def _backfill_series_keys(cursor: Any) -> None:

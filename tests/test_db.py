@@ -6,7 +6,14 @@ import unittest
 from unittest.mock import patch
 
 from app.config import Settings
-from app.db import DatabaseUnavailable, _ensure_index, close_connection_pools, connect, transaction
+from app.db import (
+    DatabaseUnavailable,
+    _ensure_followed_series_media_primary,
+    _ensure_index,
+    close_connection_pools,
+    connect,
+    transaction,
+)
 
 
 class _FakePyMySQL:
@@ -92,6 +99,29 @@ class DatabaseTlsTests(unittest.TestCase):
 
 
 class DatabaseMigrationTests(unittest.TestCase):
+    def test_followed_series_primary_key_is_rebuilt_for_tidb(self) -> None:
+        cursor = unittest.mock.MagicMock()
+        cursor.fetchone.return_value = {
+            "columns_list": "user_id,publisher_id,normalized_series"
+        }
+
+        _ensure_followed_series_media_primary(cursor)
+
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertTrue(any("CREATE TABLE followed_series_rebuild" in sql for sql in statements))
+        self.assertTrue(any("INSERT IGNORE INTO followed_series_rebuild" in sql for sql in statements))
+        self.assertTrue(any("RENAME TABLE followed_series" in sql for sql in statements))
+
+    def test_followed_series_primary_key_is_left_when_current(self) -> None:
+        cursor = unittest.mock.MagicMock()
+        cursor.fetchone.return_value = {
+            "columns_list": "user_id,publisher_id,normalized_series,media_type"
+        }
+
+        _ensure_followed_series_media_primary(cursor)
+
+        cursor.execute.assert_called_once()
+
     def test_missing_index_is_added_once(self) -> None:
         cursor = unittest.mock.MagicMock()
         cursor.fetchone.return_value = {"present": 0}

@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS followed_series (
     media_type VARCHAR(40) NOT NULL DEFAULT 'unknown',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, publisher_id, normalized_series, media_type),
+    KEY idx_followed_series_publisher (publisher_id),
     CONSTRAINT fk_followed_series_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_followed_series_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
