@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from inspect import getsource
 
-from app.repository import merge_recommendation_rows, resolve_purchased_date, search_terms
+from app.repository import list_series, merge_recommendation_rows, resolve_purchased_date, search_terms
 
 
 class RepositorySearchTests(unittest.TestCase):
+    def test_series_query_groups_correlated_publisher_for_tidb(self) -> None:
+        source = getsource(list_series)
+        self.assertIn(
+            "GROUP BY b.publisher_id, p.id, p.code, p.name,",
+            source,
+        )
+
     def test_purchase_date_defaults_once_and_clears_outside_collection(self) -> None:
         today = date(2026, 8, 24)
         existing = date(2026, 8, 1)

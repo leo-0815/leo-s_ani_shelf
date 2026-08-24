@@ -933,7 +933,8 @@ def list_series(
                 "LEFT JOIN wishlist_items w ON w.book_id = b.id "
                 "LEFT JOIN followed_series fs ON fs.publisher_id = b.publisher_id "
                 "AND fs.normalized_series = b.series_key AND fs.media_type = b.media_type "
-                f"WHERE {clause} GROUP BY p.id, p.code, p.name, b.series_key, b.media_type "
+                f"WHERE {clause} GROUP BY b.publisher_id, p.id, p.code, p.name, "
+                "b.series_key, b.media_type "
                 "ORDER BY MAX(b.release_date) DESC, MIN(b.series_title) LIMIT %s OFFSET %s",
                 [*values, min(max(limit, 1), 200), max(offset, 0)],
             )
