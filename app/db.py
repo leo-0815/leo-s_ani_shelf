@@ -213,6 +213,7 @@ def ensure_schema() -> None:
                 "owned_format",
                 "VARCHAR(20) NOT NULL DEFAULT 'paper'",
             )
+            _ensure_column(cursor, "wishlist_items", "purchased_at", "DATE NULL")
             _ensure_column(cursor, "crawl_jobs", "skipped_count", "INT UNSIGNED NOT NULL DEFAULT 0")
             _ensure_column(
                 cursor,

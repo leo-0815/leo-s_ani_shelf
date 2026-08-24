@@ -225,13 +225,23 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path in {"/api/export.json", "/api/export.csv"}:
             query = parse_qs(parsed.query)
             wishlist_only = query.get("wishlist", ["0"])[0] == "1"
-            if not wishlist_only and not self._require_admin(user):
+            collection_only = query.get("collection", ["0"])[0] == "1"
+            if not wishlist_only and not collection_only and not self._require_admin(user):
                 return
             if parsed.path.endswith(".json"):
-                content = json.dumps(export_catalog(user_id, wishlist_only), ensure_ascii=False, indent=2, default=str).encode("utf-8")
-                self._download(content, "application/json; charset=utf-8", "anishelf-export.json")
+                content = json.dumps(
+                    export_catalog(user_id, wishlist_only, collection_only),
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                ).encode("utf-8")
+                self._download(
+                    content,
+                    "application/json; charset=utf-8",
+                    "anishelf-collection.json" if collection_only else "anishelf-export.json",
+                )
             else:
-                self._export_csv(user_id, wishlist_only)
+                self._export_csv(user_id, wishlist_only, collection_only)
         elif parsed.path == "/api/calendar.ics":
             query = parse_qs(parsed.query)
             self._export_calendar(user_id, int(query.get("days", ["90"])[0]))
@@ -437,6 +447,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("order_number", "")),
                     int(payload["paid_price"]) if str(payload.get("paid_price", "")).isdigit() else None,
                     str(payload.get("owned_format", "paper")),
+                    str(payload.get("purchased_at", "")) or None,
                 )
                 self._json({"ok": True})
             else:
@@ -709,8 +720,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _export_csv(self, user_id: int, wishlist_only: bool) -> None:
-        data = export_catalog(user_id, wishlist_only)
+    def _export_csv(
+        self,
+        user_id: int,
+        wishlist_only: bool,
+        collection_only: bool = False,
+    ) -> None:
+        data = export_catalog(user_id, wishlist_only, collection_only)
         output = io.StringIO()
         fields = [
             "publisher_name",
@@ -730,6 +746,7 @@ class Handler(BaseHTTPRequestHandler):
             "wishlist_order_number",
             "wishlist_paid_price",
             "wishlist_format",
+            "wishlist_purchased_at",
             "source_url",
         ]
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
@@ -738,7 +755,7 @@ class Handler(BaseHTTPRequestHandler):
         self._download(
             ("\ufeff" + output.getvalue()).encode("utf-8"),
             "text/csv; charset=utf-8",
-            "anishelf-export.csv",
+            "anishelf-collection.csv" if collection_only else "anishelf-export.csv",
         )
 
     def _export_calendar(self, user_id: int, days: int) -> None:
