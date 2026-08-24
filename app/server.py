@@ -211,7 +211,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(list_series(query, user_id, int(query.get("limit", "100")), int(query.get("offset", "0"))))
         elif parsed.path == "/api/series/detail":
             query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
-            series = get_series(user_id, query.get("publisher", ""), query.get("title", ""))
+            series = get_series(
+                user_id,
+                query.get("publisher", ""),
+                query.get("title", ""),
+                query.get("media_type", ""),
+            )
             self._json(series or {"error": "Series not found"}, HTTPStatus.OK if series else HTTPStatus.NOT_FOUND)
         elif parsed.path == "/api/quality":
             if self._require_admin(user):
@@ -318,7 +323,11 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/series/detail":
                 query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
-                series = get_series(query.get("publisher", ""), query.get("title", ""))
+                series = get_series(
+                    query.get("publisher", ""),
+                    query.get("title", ""),
+                    query.get("media_type", ""),
+                )
                 self._json(
                     series or {"error": "找不到系列"},
                     HTTPStatus.OK if series else HTTPStatus.NOT_FOUND,

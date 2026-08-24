@@ -14,6 +14,7 @@ from app.models import (
     normalize_content_rating,
     normalize_text,
 )
+from app.series import canonical_series_title, clean_series_title, series_alias_key, series_key
 
 
 class ModelTests(unittest.TestCase):
@@ -64,6 +65,8 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(extract_volume("ONE PIECE~航海王~114"), "114")
         self.assertEqual(infer_series_title("ONE PIECE~航海王~114"), "ONE PIECE~航海王")
         self.assertEqual(extract_volume("完全版 12完(首刷書盒版)"), "12")
+        self.assertEqual(extract_volume("義妹生活 (14)(特裝版)【10月中旬出貨】"), "14")
+        self.assertEqual(extract_volume("堤亞穆帝國物語(17)~從斷頭台開始~"), "17")
 
     def test_release_status(self) -> None:
         self.assertEqual(infer_status(date.today() - timedelta(days=1), "day"), "available")
@@ -97,6 +100,35 @@ class ModelTests(unittest.TestCase):
     def test_rating_normalizer_does_not_guess_from_unrecognized_text(self) -> None:
         self.assertEqual(normalize_content_rating("戀愛喜劇"), "unknown")
         self.assertEqual(normalize_content_rating("未滿18歲不得購買"), "restricted_18")
+
+    def test_series_cleanup_merges_editions_and_box_set_ranges(self) -> None:
+        self.assertEqual(clean_series_title("ARMS神臂 (首刷附錄版)"), "ARMS神臂")
+        self.assertEqual(clean_series_title("最高機密 7~12完(首刷書盒版)"), "最高機密")
+        self.assertEqual(clean_series_title("敗北女角太多了! 8.5(豪華)"), "敗北女角太多了!")
+        self.assertEqual(clean_series_title("安達與島村 (SS2) 首刷"), "安達與島村")
+
+    def test_series_key_ignores_safe_punctuation_and_media_suffixes(self) -> None:
+        self.assertEqual(
+            series_key("SPY×FAMILY 間諜家家酒 漫畫小說版", "tongli"),
+            series_key("SPY × FAMILY 間諜家家酒", "tongli"),
+        )
+        self.assertNotEqual(series_key("排球少年!!", "tongli"), series_key("排球少年!! REMIX版", "tongli"))
+        self.assertNotEqual(series_key("驚爆危機", "kadokawa"), series_key("驚爆危機Σ", "kadokawa"))
+        self.assertNotEqual(series_key("骷髏", "spp"), series_key("骷髏13", "spp"))
+
+    def test_confirmed_alias_dictionary_supplies_canonical_title(self) -> None:
+        self.assertEqual(
+            canonical_series_title("ONE PIECE~航海王", "tongli"),
+            "ONE PIECE～航海王～",
+        )
+        self.assertNotEqual(
+            series_alias_key("航海王"),
+            series_alias_key("ONE PIECE～航海王～"),
+        )
+        self.assertEqual(
+            series_key("航海王", "tongli"),
+            series_key("ONE PIECE～航海王～", "tongli"),
+        )
 
 
 if __name__ == "__main__":

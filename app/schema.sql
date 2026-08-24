@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS books (
     title VARCHAR(500) NOT NULL,
     normalized_title VARCHAR(500) NOT NULL,
     series_title VARCHAR(500) NULL,
+    series_key VARCHAR(190) NULL,
     volume_label VARCHAR(80) NULL,
     edition_type VARCHAR(40) NOT NULL DEFAULT 'standard',
     media_type VARCHAR(40) NOT NULL DEFAULT 'unknown',
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS books (
     KEY idx_books_release (release_date, release_status),
     KEY idx_books_isbn (isbn),
     KEY idx_books_title (normalized_title(190)),
+    KEY idx_books_series (publisher_id, series_key),
     KEY idx_books_rating (content_rating, rating_locked),
     CONSTRAINT fk_books_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -143,9 +145,24 @@ CREATE TABLE IF NOT EXISTS followed_series (
     normalized_series VARCHAR(190) NOT NULL,
     media_type VARCHAR(40) NOT NULL DEFAULT 'unknown',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, publisher_id, normalized_series),
+    PRIMARY KEY (user_id, publisher_id, normalized_series, media_type),
     CONSTRAINT fk_followed_series_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_followed_series_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS series_aliases (
+    publisher_id BIGINT UNSIGNED NOT NULL,
+    alias_key VARCHAR(190) NOT NULL,
+    canonical_title VARCHAR(500) NOT NULL,
+    canonical_key VARCHAR(190) NOT NULL,
+    match_method VARCHAR(30) NOT NULL DEFAULT 'manual',
+    confidence TINYINT UNSIGNED NOT NULL DEFAULT 100,
+    approved BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (publisher_id, alias_key),
+    KEY idx_series_alias_canonical (publisher_id, canonical_key),
+    CONSTRAINT fk_series_alias_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS recommendation_dismissals (

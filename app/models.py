@@ -126,7 +126,7 @@ def extract_volume(title: str) -> str | None:
         normalized = normalized.replace(marker, "")
     normalized = re.sub(r"[（(]\s*[）)]", "", normalized)
     patterns = [
-        r"[（(](\d{1,3}|全|上|下)[）)](?:\s*(?:豪華限定版|首刷限定版|初回限定版|特別版|特裝版|限定版|特典版|同捆版))?(?:\s|$)",
+        r"[（(](\d{1,3}|全|上|下)[）)](?:\s*(?:豪華限定版|首刷限定版|初回限定版|特別版|特裝版|限定版|特典版|同捆版))?(?=\s|$|[~～【〖\[])",
         r"第\s*(\d{1,3})\s*(?:卷|集|冊)",
         r"\s(\d{1,3})(?:\s*(?:特裝版|限定版|特典版|同捆版))?$",
         r"(?:Vol\.?\s*|VOL\.?\s*)(\d{1,3})(?:\D|$)",
@@ -190,6 +190,8 @@ class BookRecord:
     rating_confidence: int = 0
 
     def prepared(self) -> dict[str, Any]:
+        from .series import canonical_series_title, series_key
+
         data = asdict(self)
         data["title"] = normalize_text(self.title)
         data["normalized_title"] = normalize_text(self.title).casefold()
@@ -209,7 +211,9 @@ class BookRecord:
             data["rating_source"] = "unknown"
         data["edition_type"] = self.edition_type or detect_edition(self.title)
         data["volume_label"] = self.volume_label or extract_volume(self.title)
-        data["series_title"] = self.series_title or infer_series_title(self.title)
+        inferred_series = self.series_title or infer_series_title(self.title)
+        data["series_title"] = canonical_series_title(inferred_series, self.publisher_code) or None
+        data["series_key"] = series_key(inferred_series, self.publisher_code) or None
         if self.release_status == "unknown":
             data["release_status"] = infer_status(self.release_date, self.release_precision)
         serializable = dict(data)
