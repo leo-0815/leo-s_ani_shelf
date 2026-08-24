@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      migrate_database_only:
+        description: Run idempotent database migrations without updating publishers
+        required: false
+        default: false
+        type: boolean
       test_email_user_id:
         description: Send a Gmail SMTP test to one AniShelf user id
         required: false
@@ -69,11 +74,14 @@ jobs:
             fi
           done
       - name: Update publishers and send notifications
-        if: ${{ github.event_name == 'schedule' || (inputs.test_email_only != true && inputs.test_database_only != true && inputs.test_email_user_id == '') }}
+        if: ${{ github.event_name == 'schedule' || (inputs.test_email_only != true && inputs.test_database_only != true && inputs.migrate_database_only != true && inputs.test_email_user_id == '') }}
         run: python -m app.scheduled
       - name: Test TiDB connection
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_database_only == true }}
         run: python -m app.database_check
+      - name: Run TiDB migrations
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.migrate_database_only == true }}
+        run: python anishelf.py migrate
       - name: Send Gmail SMTP test email
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_email_only == true }}
         run: python -m app.notifications --test-email
