@@ -390,6 +390,13 @@ def list_books(
         values.append(filters["status"])
     if filters.get("wishlist") == "1":
         where.append("w.book_id IS NOT NULL")
+    if filters.get("collection") == "1":
+        where.append("w.state = 'purchased'")
+    if filters.get("owned_format"):
+        if filters["owned_format"] not in {"paper", "digital", "both"}:
+            raise ValueError("無效的收藏格式")
+        where.append("w.owned_format = %s")
+        values.append(filters["owned_format"])
     if filters.get("date_from"):
         where.append("b.release_date >= %s")
         values.append(date.fromisoformat(filters["date_from"]))
@@ -421,6 +428,7 @@ def list_books(
                 "title_asc": "b.normalized_title ASC, b.release_date DESC",
                 "added_desc": "b.first_seen_at DESC, b.release_date DESC",
                 "updated_desc": "b.updated_at DESC, b.release_date DESC",
+                "purchased_desc": "(w.purchased_at IS NULL), w.purchased_at DESC, w.updated_at DESC",
             }.get(
                 filters.get("sort"),
                 "(b.release_date IS NULL), b.release_date DESC, b.updated_at DESC",
@@ -440,7 +448,7 @@ def list_books(
                 "w.state AS wishlist_state, w.notes AS wishlist_notes, w.follow_series, "
                 "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
                 "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
-                "w.owned_format AS wishlist_format, "
+                "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
                 "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.user_id = %s "
                 "AND fs.publisher_id = b.publisher_id "
                 "AND fs.normalized_series = LEFT(LOWER(b.series_title), 190)) AS series_following "
@@ -467,7 +475,7 @@ def get_book(book_id: int, user_id: int) -> dict[str, Any] | None:
                 "w.state AS wishlist_state, w.notes AS wishlist_notes, w.follow_series, "
                 "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
                 "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
-                "w.owned_format AS wishlist_format, "
+                "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
                 "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.user_id = %s "
                 "AND fs.publisher_id = b.publisher_id "
                 "AND fs.normalized_series = LEFT(LOWER(b.series_title), 190)) AS series_following "
@@ -496,6 +504,7 @@ def set_wishlist(
     order_number: str = "",
     paid_price: int | None = None,
     owned_format: str = "paper",
+    purchased_at: str | None = None,
 ) -> None:
     allowed = {"wanted", "preordered", "purchased", "paused"}
     if state not in allowed:
@@ -505,20 +514,32 @@ def set_wishlist(
     priority = min(max(int(priority), 0), 3)
     if paid_price is not None:
         paid_price = max(int(paid_price), 0)
+    requested_purchased_date = date.fromisoformat(purchased_at) if purchased_at else None
     with transaction() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM books WHERE id = %s", (book_id,))
-            if not cursor.fetchone():
+            cursor.execute(
+                "SELECT b.id, w.purchased_at AS existing_purchased_at FROM books b "
+                "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s "
+                "WHERE b.id = %s",
+                (user_id, book_id),
+            )
+            existing = cursor.fetchone()
+            if not existing:
                 raise KeyError("找不到書籍")
+            purchased_date = resolve_purchased_date(
+                state, requested_purchased_date, existing.get("existing_purchased_at")
+            )
             cursor.execute(
                 "INSERT INTO wishlist_items "
                 "(user_id, book_id, state, notes, follow_series, priority, store_name, order_number, "
-                "paid_price, owned_format) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "paid_price, owned_format, purchased_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON DUPLICATE KEY UPDATE "
                 "state = VALUES(state), notes = VALUES(notes), "
                 "follow_series = VALUES(follow_series), priority = VALUES(priority), "
                 "store_name = VALUES(store_name), order_number = VALUES(order_number), "
-                "paid_price = VALUES(paid_price), owned_format = VALUES(owned_format)",
+                "paid_price = VALUES(paid_price), owned_format = VALUES(owned_format), "
+                "purchased_at = VALUES(purchased_at)",
                 (
                     user_id,
                     book_id,
@@ -530,9 +551,21 @@ def set_wishlist(
                     order_number[:200] or None,
                     paid_price,
                     owned_format,
+                    purchased_date,
                 ),
             )
             _set_followed_series_for_book(cursor, user_id, book_id, follow_series)
+
+
+def resolve_purchased_date(
+    state: str,
+    requested: date | None,
+    existing: date | None,
+    today: date | None = None,
+) -> date | None:
+    if state != "purchased":
+        return None
+    return requested or existing or today or date.today()
 
 
 def delete_wishlist(user_id: int, book_id: int) -> None:
@@ -988,6 +1021,18 @@ def stats(user_id: int) -> dict[str, int]:
                 (user_id,),
             )
             result.update(cursor.fetchone())
+            cursor.execute(
+                "SELECT COUNT(*) AS purchased, "
+                "SUM(w.owned_format IN ('paper', 'both')) AS purchased_paper, "
+                "SUM(w.owned_format IN ('digital', 'both')) AS purchased_digital, "
+                "COUNT(DISTINCT CASE WHEN b.series_title IS NOT NULL AND b.series_title <> '' "
+                "THEN CONCAT(b.publisher_id, ':', b.series_title) END) AS purchased_series, "
+                "COALESCE(SUM(w.paid_price), 0) AS purchased_spend "
+                "FROM wishlist_items w JOIN books b ON b.id = w.book_id "
+                "WHERE w.user_id = %s AND w.state = 'purchased'",
+                (user_id,),
+            )
+            result.update(cursor.fetchone())
     return {key: int(value or 0) for key, value in result.items()}
 
 
@@ -1151,21 +1196,33 @@ def upcoming_books(user_id: int, days: int = 31) -> list[dict[str, Any]]:
     )["items"]
 
 
-def export_catalog(user_id: int, wishlist_only: bool = False) -> dict[str, Any]:
-    filters = {"wishlist": "1"} if wishlist_only else {}
+def export_catalog(
+    user_id: int,
+    wishlist_only: bool = False,
+    collection_only: bool = False,
+) -> dict[str, Any]:
+    if wishlist_only and collection_only:
+        raise ValueError("匯出範圍不可重複")
+    filters = {"wishlist": "1"} if wishlist_only else {"collection": "1"} if collection_only else {}
     books = list_books(filters, user_id, limit=200, offset=0)
     items = books["items"]
     # Export all rows without raising the public page-size cap.
     if books["total"] > len(items):
         with transaction() as connection:
             with connection.cursor() as cursor:
-                where = "WHERE w.book_id IS NOT NULL" if wishlist_only else ""
+                where = (
+                    "WHERE w.state = 'purchased'"
+                    if collection_only
+                    else "WHERE w.book_id IS NOT NULL"
+                    if wishlist_only
+                    else ""
+                )
                 cursor.execute(
                     "SELECT b.*, p.code AS publisher_code, p.name AS publisher_name, "
                     "w.state AS wishlist_state, w.notes AS wishlist_notes, w.follow_series, "
                     "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
                     "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
-                    "w.owned_format AS wishlist_format, "
+                    "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
                     "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.user_id = %s "
                     "AND fs.publisher_id = b.publisher_id "
                     "AND fs.normalized_series = LEFT(LOWER(b.series_title), 190)) AS series_following "
@@ -1178,6 +1235,7 @@ def export_catalog(user_id: int, wishlist_only: bool = False) -> dict[str, Any]:
     return {
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "wishlist_only": wishlist_only,
+        "collection_only": collection_only,
         "count": len(items),
         "items": items,
     }

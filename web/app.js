@@ -144,6 +144,11 @@ async function loadStats() {
   $("#statUnknown").textContent = data.unknown.toLocaleString();
   $("#statScheduled").title = `${data.scheduled_undated.toLocaleString()} 本為官方預定、日期尚未公布`;
   $("#statWishlist").textContent = `${data.wishlist.toLocaleString()} / ${data.followed_series.toLocaleString()}`;
+  $("#collectionTotal").textContent = data.purchased.toLocaleString();
+  $("#collectionPaper").textContent = data.purchased_paper.toLocaleString();
+  $("#collectionDigital").textContent = data.purchased_digital.toLocaleString();
+  $("#collectionSeries").textContent = data.purchased_series.toLocaleString();
+  $("#collectionSpend").textContent = `NT$ ${data.purchased_spend.toLocaleString()}`;
 }
 
 async function loadPublishers() {
@@ -164,10 +169,12 @@ function bookParams() {
     ["publisherFilter", "publisher"], ["typeFilter", "media_type"],
     ["statusFilter", "status"], ["editionFilter", "edition"],
     ["sortFilter", "sort"], ["wishlistStateFilter", "wishlist_state"],
+    ["ownedFormatFilter", "owned_format"],
     ["dateFromFilter", "date_from"], ["dateToFilter", "date_to"],
   ];
   mappings.forEach(([id, key]) => { if ($(`#${id}`).value) params.set(key, $(`#${id}`).value); });
   if (state.view === "wishlist") params.set("wishlist", "1");
+  if (state.view === "collection") params.set("collection", "1");
   if (state.missingFilter) params.set("missing", state.missingFilter);
   params.set("limit", String(state.pageSize));
   params.set("offset", String(state.offset));
@@ -208,10 +215,13 @@ function renderBooks() {
     const selected = Boolean(book.wishlist_state);
     const edition = book.edition_type !== "standard" ? `<span class="edition-chip">${escapeHtml(editionLabels[book.edition_type] || book.edition_type)}</span>` : "";
     const priority = selected && Number(book.wishlist_priority) > 0 ? `<span class="priority-chip p${book.wishlist_priority}">${priorityLabels[book.wishlist_priority]}</span>` : "";
+    const cardAction = state.view === "collection"
+      ? `<span class="owned-format-chip">${escapeHtml(formatLabels[book.wishlist_format] || "已收藏")}</span>`
+      : `<button class="heart ${selected ? "selected" : ""}" data-wishlist="${book.id}" aria-label="${selected ? "移出" : "加入"}訂選清單">${selected ? "♥" : "♡"}</button>`;
     return `<article class="book-card" data-id="${book.id}" tabindex="0">
       <div class="cover">${image}
         <span class="badge ${escapeHtml(book.release_status)}">${escapeHtml(statusLabels[book.release_status] || "未知")}</span>
-        <button class="heart ${selected ? "selected" : ""}" data-wishlist="${book.id}" aria-label="${selected ? "移出" : "加入"}訂選清單">${selected ? "♥" : "♡"}</button>
+        ${cardAction}
       </div>
       <div class="book-meta">
         <div class="chip-row">${edition}${priority}</div>
@@ -281,6 +291,7 @@ async function openDetail(bookId) {
             <label>訂選狀態<select id="wishlistState">${Object.entries(wishlistLabels).map(([key, value]) => `<option value="${key}" ${book.wishlist_state === key ? "selected" : ""}>${value}</option>`).join("")}</select></label>
             <label>優先度<select id="wishlistPriority">${priorityLabels.map((label, index) => `<option value="${index}" ${Number(book.wishlist_priority || 0) === index ? "selected" : ""}>${label}</option>`).join("")}</select></label>
             <label>收藏格式<select id="wishlistFormat">${Object.entries(formatLabels).map(([key, value]) => `<option value="${key}" ${book.wishlist_format === key ? "selected" : ""}>${value}</option>`).join("")}</select></label>
+            <label id="purchasedAtLabel">購入日期<input id="wishlistPurchasedAt" type="date" value="${escapeHtml(book.wishlist_purchased_at || "")}"></label>
             <label class="check-label"><input id="followSeries" type="checkbox" ${book.follow_series || book.series_following ? "checked" : ""}> 自動追蹤此系列新書</label>
             <label>預購／購入店家<input id="wishlistStore" value="${escapeHtml(book.wishlist_store || "")}" placeholder="例如博客來、安利美特"></label>
             <label>訂單編號<input id="wishlistOrder" value="${escapeHtml(book.wishlist_order_number || "")}" placeholder="僅儲存在本機"></label>
@@ -312,6 +323,12 @@ async function openDetail(bookId) {
       </section>` : ""}
     </div>`;
     $("#wishlistForm").addEventListener("submit", saveWishlist);
+    const syncPurchasedDate = () => {
+      const purchased = $("#wishlistState").value === "purchased";
+      $("#purchasedAtLabel").classList.toggle("hidden", !purchased);
+    };
+    $("#wishlistState").addEventListener("change", syncPurchasedDate);
+    syncPurchasedDate();
     $("#removeWishlist")?.addEventListener("click", removeWishlist);
     $("#openBookSeries").addEventListener("click", () => {
       $("#detailDialog").close();
@@ -356,6 +373,7 @@ async function saveWishlist(event) {
     order_number: $("#wishlistOrder").value,
     paid_price: $("#wishlistPaidPrice").value,
     owned_format: $("#wishlistFormat").value,
+    purchased_at: $("#wishlistPurchasedAt").value,
   };
   try {
     await api(`/api/wishlist/${state.currentBook.id}`, {method: "POST", body: JSON.stringify(payload)});
@@ -802,24 +820,26 @@ async function loadLatestJob() {
 }
 
 function clearFilters(reload = true) {
-  ["publisherFilter", "typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "dateFromFilter", "dateToFilter"].forEach(id => $(`#${id}`).value = "");
+  ["publisherFilter", "typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => $(`#${id}`).value = "");
   $("#searchInput").value = "";
   state.missingFilter = "";
+  if (state.view === "collection") $("#sortFilter").value = "purchased_desc";
   if (reload) loadBooks(true).catch(error => toast(error.message, true));
 }
 
 function switchView(view) {
-  const availableViews = ["library", "wishlist", "series", "upcoming", "recommendations", "notifications", "quality", "sources"];
+  const availableViews = ["library", "wishlist", "collection", "series", "upcoming", "recommendations", "notifications", "quality", "sources"];
   if (!availableViews.includes(view)) view = "library";
   if (!state.user?.is_admin && ["quality", "sources"].includes(view)) view = "library";
   state.view = view;
   if (location.hash !== `#${view}`) history.replaceState(null, "", `#${view}`);
   $$(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.view === view));
   $$(".view-section").forEach(section => section.classList.add("hidden"));
-  const libraryMode = ["library", "wishlist"].includes(view);
+  const libraryMode = ["library", "wishlist", "collection"].includes(view);
   $(`#${libraryMode ? "library" : view}View`).classList.remove("hidden");
   const titles = {
-    library: ["MY COLLECTION", "Library"], wishlist: ["WISHLIST", "已訂選清單"],
+    library: ["ALL CATALOG", "Library"], wishlist: ["WISHLIST", "已訂選清單"],
+    collection: ["OWNED BOOKS", "我的藏書"],
     series: ["SERIES SHELF", "系列書架"], upcoming: ["RELEASE CALENDAR", "近期上市"],
     recommendations: ["FOR YOU", "為你推薦"],
     notifications: ["NOTIFICATION SETTINGS", "通知設定"],
@@ -827,8 +847,12 @@ function switchView(view) {
   };
   $("#pageEyebrow").textContent = titles[view][0];
   $("#pageTitle").textContent = titles[view][1];
-  $("#searchBox").classList.toggle("hidden", !["library", "wishlist", "series"].includes(view));
+  $("#searchBox").classList.toggle("hidden", !["library", "wishlist", "collection", "series"].includes(view));
   $("#wishlistStateFilter").classList.toggle("hidden", view !== "wishlist");
+  $("#ownedFormatFilter").classList.toggle("hidden", view !== "collection");
+  $("#collectionSummary").classList.toggle("hidden", view !== "collection");
+  if (view !== "collection" && $("#sortFilter").value === "purchased_desc") $("#sortFilter").value = "";
+  if (view === "collection" && !$("#sortFilter").value) $("#sortFilter").value = "purchased_desc";
   if (libraryMode) loadBooks(true).catch(error => toast(error.message, true));
   if (view === "series") loadSeries(true).catch(error => toast(error.message, true));
   if (view === "upcoming") loadUpcoming().catch(error => toast(error.message, true));
@@ -845,7 +869,7 @@ $("#searchInput").addEventListener("input", () => {
     load().catch(error => toast(error.message, true));
   }, 280);
 });
-["publisherFilter", "typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "dateFromFilter", "dateToFilter"].forEach(id => {
+["publisherFilter", "typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => {
   $(`#${id}`).addEventListener("change", () => {
     const load = state.view === "series" ? () => loadSeries(true) : () => loadBooks(true);
     load().catch(error => toast(error.message, true));
@@ -911,7 +935,7 @@ let libraryResizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(libraryResizeTimer);
   libraryResizeTimer = setTimeout(() => {
-    if (state.view !== "library" && state.view !== "wishlist") return;
+    if (!["library", "wishlist", "collection"].includes(state.view)) return;
     if (!syncBookPageSize()) return;
     state.offset = 0;
     loadBooks().catch(error => toast(error.message, true));

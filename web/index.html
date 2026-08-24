@@ -29,6 +29,7 @@
           <button class="nav-item" data-view="series"><span>▤</span>系列書架</button>
           <button class="nav-item" data-view="upcoming"><span>◷</span>近期上市</button>
           <button class="nav-item" data-view="wishlist"><span>♡</span>已訂選</button>
+          <button class="nav-item" data-view="collection"><span>✓</span>我的藏書</button>
           <button class="nav-item" data-view="recommendations"><span>✦</span>為你推薦</button>
           <button class="nav-item" data-view="notifications"><span>✉</span>通知設定</button>
           <button class="nav-item" data-view="quality"><span>◇</span>資料品質</button>
@@ -75,6 +76,14 @@
         </section>
 
         <section class="content-card view-section" id="libraryView">
+          <div class="collection-summary hidden" id="collectionSummary">
+            <article><small>藏書</small><strong id="collectionTotal">0</strong></article>
+            <article><small>紙本</small><strong id="collectionPaper">0</strong></article>
+            <article><small>電子書</small><strong id="collectionDigital">0</strong></article>
+            <article><small>收藏系列</small><strong id="collectionSeries">0</strong></article>
+            <article><small>累計實付</small><strong id="collectionSpend">NT$ 0</strong></article>
+            <a class="secondary button-link" href="/api/export.csv?collection=1">匯出藏書 CSV</a>
+          </div>
           <div class="toolbar">
             <div class="filters">
               <select id="publisherFilter" aria-label="出版社"><option value="">全部出版社</option></select>
@@ -90,8 +99,11 @@
               <select class="hidden" id="wishlistStateFilter" aria-label="訂選狀態">
                 <option value="">所有訂選狀態</option><option value="wanted">想買</option><option value="preordered">已預購</option><option value="purchased">已購入</option><option value="paused">暫不購買</option>
               </select>
+              <select class="hidden" id="ownedFormatFilter" aria-label="收藏格式">
+                <option value="">所有收藏格式</option><option value="paper">紙本</option><option value="digital">電子書</option><option value="both">紙本＋電子</option>
+              </select>
               <select id="sortFilter" aria-label="排序">
-                <option value="">最新上市</option><option value="release_asc">最早上市</option><option value="added_desc">最近收錄</option><option value="updated_desc">最近變更</option><option value="title_asc">書名排序</option>
+                <option value="">最新上市</option><option value="purchased_desc">最近購入</option><option value="release_asc">最早上市</option><option value="added_desc">最近收錄</option><option value="updated_desc">最近變更</option><option value="title_asc">書名排序</option>
               </select>
               <label class="date-filter">從<input id="dateFromFilter" type="date" aria-label="開始日期" /></label>
               <label class="date-filter">到<input id="dateToFilter" type="date" aria-label="結束日期" /></label>

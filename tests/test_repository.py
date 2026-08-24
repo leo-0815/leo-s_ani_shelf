@@ -1,18 +1,31 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 from app.repository import (
     _crawler_write_data,
     _sync_write_data,
     merge_recommendation_rows,
+    resolve_purchased_date,
     search_terms,
     set_book_rating,
 )
 
 
 class RepositorySearchTests(unittest.TestCase):
+    def test_purchase_date_defaults_once_and_clears_outside_collection(self) -> None:
+        today = date(2026, 8, 24)
+        existing = date(2026, 8, 1)
+        self.assertEqual(resolve_purchased_date("purchased", None, None, today), today)
+        self.assertEqual(resolve_purchased_date("purchased", None, existing, today), existing)
+        self.assertEqual(
+            resolve_purchased_date("purchased", date(2026, 7, 2), existing, today),
+            date(2026, 7, 2),
+        )
+        self.assertIsNone(resolve_purchased_date("wanted", existing, existing, today))
+
     def test_search_terms_are_partial_and_space_separated(self) -> None:
         self.assertEqual(search_terms("  月刊少女　野崎  "), ["月刊少女", "野崎"])
 

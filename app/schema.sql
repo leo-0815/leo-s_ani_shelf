@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS wishlist_items (
     order_number VARCHAR(200) NULL,
     paid_price INT UNSIGNED NULL,
     owned_format VARCHAR(20) NOT NULL DEFAULT 'paper',
+    purchased_at DATE NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, book_id),
