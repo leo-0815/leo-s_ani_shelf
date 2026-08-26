@@ -15,6 +15,10 @@ from typing import Iterable
 
 USER_AGENT = "AniShelf/0.1 (personal release catalog; respectful low-rate fetcher)"
 MAX_RESPONSE_BYTES = 6 * 1024 * 1024
+RETRYABLE_HTTP_STATUS = frozenset(
+    {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+)
+RETRY_DELAYS = (2.0, 5.0, 10.0, 20.0)
 
 
 def _normalized_url(url: str) -> str:
@@ -58,15 +62,19 @@ def _fetch_payload(
                 return payload, response.headers.get_content_charset() or "utf-8"
         except urllib.error.HTTPError as exc:
             last_error = exc
-            if exc.code not in {408, 425, 429, 500, 502, 503, 504} or attempt + 1 >= attempts:
+            if exc.code not in RETRYABLE_HTTP_STATUS or attempt + 1 >= attempts:
                 raise RuntimeError(f"HTTP {exc.code}: {url}") from exc
             retry_after = exc.headers.get("Retry-After")
-            delay = float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt
+            delay = (
+                float(retry_after)
+                if retry_after and retry_after.isdigit()
+                else RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+            )
         except urllib.error.URLError as exc:
             last_error = exc
             if attempt + 1 >= attempts:
                 raise RuntimeError(f"無法連線到 {url}: {exc.reason}") from exc
-            delay = 2 ** attempt
+            delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
         time.sleep(delay + random.uniform(0.1, 0.4))
     raise RuntimeError(f"無法連線到 {url}: {last_error}")
 
