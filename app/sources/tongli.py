@@ -98,7 +98,9 @@ class TongLiSource:
         records: list[BookRecord] = []
         for page_number in range(1, self.schedule_pages + 1):
             url = f"https://www.tongli.com.tw/Search1.aspx?Page={page_number}"
-            records.extend(self._parse_schedule(url, fetch_html(url)))
+            records.extend(
+                self._parse_schedule(url, fetch_html(url, timeout=30, attempts=5))
+            )
             if page_number < self.schedule_pages:
                 polite_pause(0.35)
         return records
