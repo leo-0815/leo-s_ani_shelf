@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .collection import save_custom, set_owned
 from .models import BookRecord
 from .repository import set_wishlist, upsert_book
 
@@ -17,11 +18,20 @@ def restore_export(path: Path, user_id: int | None = None) -> dict[str, int]:
     totals = {"processed": 0, "inserted": 0, "updated": 0, "wishlist": 0, "errors": 0}
     for item in items:
         try:
+            if item.get("is_custom"):
+                if user_id is None:
+                    raise ValueError("還原私人藏書需要指定帳號")
+                save_custom(user_id, {**item, **(item.get("collection") or {})})
+                totals["processed"] += 1
+                totals["inserted"] += 1
+                continue
             record = _record_from_export(item)
             outcome = upsert_book(record)
             totals["processed"] += 1
             if outcome in totals:
                 totals[outcome] += 1
+            if user_id is not None and item.get("is_owned"):
+                set_owned(user_id, _book_id(record.publisher_code, record.source_key), item.get("collection") or item)
             if user_id is not None and item.get("wishlist_state"):
                 set_wishlist(
                     user_id,

@@ -82,6 +82,7 @@
             <article><small>電子書</small><strong id="collectionDigital">0</strong></article>
             <article><small>收藏系列</small><strong id="collectionSeries">0</strong></article>
             <article><small>累計實付</small><strong id="collectionSpend">NT$ 0</strong></article>
+            <button class="primary" id="addCollectionBook" type="button">＋ 新增藏書</button>
             <a class="secondary button-link" href="/api/export.csv?collection=1">匯出藏書 CSV</a>
           </div>
           <div class="toolbar">
@@ -268,6 +269,11 @@
     <dialog id="detailDialog">
       <button class="dialog-close" aria-label="關閉" id="dialogClose">×</button>
       <div id="detailContent"></div>
+    </dialog>
+
+    <dialog id="collectionAddDialog" class="collection-add-dialog">
+      <button class="dialog-close" aria-label="關閉" id="collectionAddClose">×</button>
+      <div id="collectionAddContent"></div>
     </dialog>
 
     <dialog id="seriesDialog">
