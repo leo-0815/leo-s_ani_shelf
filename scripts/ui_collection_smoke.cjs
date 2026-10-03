@@ -73,6 +73,7 @@ const assert = require("node:assert/strict");
     assert.equal(await page.locator('[data-id="-12"] .title-cover').textContent(),"我的私人藏書");
     assert.equal(await page.locator('[data-id="-12"] [data-wishlist]').count(),0);
     await page.locator('[data-id="2"]').click();
+    await page.waitForFunction(()=>document.querySelector('#wishlistForm [type="submit"]')?.textContent==="儲存藏書");
     assert.equal(await page.locator('#wishlistForm [type="submit"]').textContent(),"儲存藏書");
     await page.locator("#dialogClose").click();
     await page.setViewportSize({width:390,height:844});

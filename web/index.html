@@ -32,6 +32,7 @@
           <button class="nav-item" data-view="collection"><span>✓</span>我的藏書</button>
           <button class="nav-item" data-view="recommendations"><span>✦</span>為你推薦</button>
           <button class="nav-item" data-view="notifications"><span>✉</span>通知設定</button>
+          <button class="nav-item" data-view="preferences"><span>⚙</span>偏好設定</button>
           <button class="nav-item" data-view="quality"><span>◇</span>資料品質</button>
           <button class="nav-item" data-view="sources"><span>↻</span>資料來源</button>
         </nav>
@@ -75,6 +76,22 @@
           <article><span class="stat-icon violet">♡</span><div><small>已訂選／追蹤</small><strong id="statWishlist">—</strong></div></article>
         </section>
 
+        <div class="catalog-filter-bar" id="catalogFilterBar">
+          <details class="publisher-picker" id="publisherFilter">
+            <summary id="publisherSummary">全部出版社</summary>
+            <div class="publisher-menu">
+              <p>可同時勾選多家出版社</p>
+              <div class="publisher-actions">
+                <button class="text-button" type="button" id="publisherSelectAll">全選</button>
+                <button class="text-button" type="button" id="publisherSelectNone">清除勾選</button>
+              </div>
+              <fieldset id="publisherOptions"><legend class="sr-only">選擇出版社</legend></fieldset>
+              <button class="primary compact" type="button" id="publisherApply">套用篩選</button>
+            </div>
+          </details>
+          <small id="publisherSelectionHint">顯示全部出版社；可任選多家</small>
+          <button class="text-button" id="publisherReset" type="button">重設出版社</button>
+        </div>
         <section class="content-card view-section" id="libraryView">
           <div class="collection-summary hidden" id="collectionSummary">
             <article><small>藏書</small><strong id="collectionTotal">0</strong></article>
@@ -87,7 +104,6 @@
           </div>
           <div class="toolbar">
             <div class="filters">
-              <select id="publisherFilter" aria-label="出版社"><option value="">全部出版社</option></select>
               <select id="typeFilter" aria-label="類型">
                 <option value="">漫畫與小說</option><option value="manga">漫畫</option><option value="novel">輕小說</option>
               </select>
@@ -242,6 +258,15 @@
           </section>
         </section>
 
+        <section class="content-card view-section hidden" id="preferencesView">
+          <div class="section-heading"><div><p class="eyebrow">PREFERENCES</p><h2>偏好設定</h2></div></div>
+          <form id="preferencesForm" class="preferences-form">
+            <label class="preference-switch"><input id="generalAudience" type="checkbox"> 一般向</label>
+            <p>勾選後暫時隱藏青文出版社的書目、封面與推薦；取消勾選即恢復顯示全部出版社。</p>
+            <p class="preference-warning">此為出版社層級的暫時篩選，並非書籍分級判定，無法保證其他出版社皆為適合所有年齡的內容。既有藏書、訂選及追蹤紀錄不會被刪除；備份與通知設定不受影響。</p>
+            <button class="primary" type="submit">儲存偏好設定</button>
+          </form>
+        </section>
         <section class="content-card view-section hidden" id="qualityView">
           <div class="section-heading">
             <div><p class="eyebrow">DATA CHECK</p><h2>資料品質</h2></div>

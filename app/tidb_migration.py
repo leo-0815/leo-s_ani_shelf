@@ -37,6 +37,7 @@ TABLE_ORDER = (
     "release_history",
     "notification_deliveries",
     "notification_preferences",
+    "user_preferences",
 )
 
 

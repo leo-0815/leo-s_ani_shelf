@@ -7,6 +7,8 @@ const state = {
   recommendations: [],
   recommendationSeries: [],
   publishers: [],
+  selectedPublishers: null,
+  generalAudience: false,
   currentBook: null,
   currentSeries: null,
   pendingSeriesFollow: null,
@@ -121,6 +123,8 @@ const formatLabels = {paper: "紙本", digital: "電子書", both: "紙本＋電
 async function loadAll() {
   if (!await loadSession()) return;
   try {
+    state.generalAudience = Boolean(state.user.general_audience);
+    $("#generalAudience").checked = state.generalAudience;
     await Promise.all([loadPublishers(), loadStats(), loadBooks()]);
     $("#healthDot").className = "health-dot ok";
     $("#healthText").textContent = "TiDB 已連接";
@@ -154,25 +158,78 @@ async function loadStats() {
 async function loadPublishers() {
   const data = await api("/api/publishers");
   state.publishers = data.items;
-  const options = data.items
-    .filter(item => item.enabled || item.book_count)
-    .map(item => `<option value="${escapeHtml(item.code)}">${escapeHtml(item.name)}</option>`).join("");
-  $("#publisherFilter").innerHTML = `<option value="">全部出版社</option>${options}`;
+  renderPublisherOptions();
+  renderPublisherSummary();
   renderSources();
 }
+
+function selectablePublishers() {
+  return state.publishers.filter(item => item.enabled || item.book_count);
+}
+
+function renderPublisherOptions() {
+  $("#publisherOptions").innerHTML = '<legend class="sr-only">選擇出版社</legend>' +
+    selectablePublishers().map(item => `<label><input type="checkbox" value="${escapeHtml(item.code)}" ${state.selectedPublishers === null || state.selectedPublishers.includes(item.code) ? "checked" : ""}>${escapeHtml(item.name)}</label>`).join("");
+}
+
+function renderPublisherSummary() {
+  const selected = state.selectedPublishers;
+  const names = selected === null ? [] : selectablePublishers().filter(item => selected.includes(item.code)).map(item => item.name);
+  $("#publisherSummary").textContent = selected === null ? "全部出版社" : !selected.length ? "未選擇出版社" : selected.length === 1 ? (names[0] || selected[0]) : `已選 ${selected.length} 家出版社`;
+  $("#publisherSelectionHint").textContent = selected === null ? (state.generalAudience ? "一般向：暫時隱藏青文；可任選多家" : "顯示全部出版社；可任選多家") : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社已被一般向設定隱藏";
+}
+
+function addPublisherParams(params) {
+  if (state.selectedPublishers !== null) params.set("publishers", state.selectedPublishers.join(",") || "none");
+}
+
+function reloadFilteredView() {
+  const load = state.view === "series" ? () => loadSeries(true) : () => loadBooks(true);
+  return load().catch(error => toast(error.message, true));
+}
+
+$("#publisherFilter").addEventListener("toggle", () => {
+  if ($("#publisherFilter").open) renderPublisherOptions();
+});
+$("#publisherSelectAll").addEventListener("click", () => $$("#publisherOptions input").forEach(input => { input.checked = true; }));
+$("#publisherSelectNone").addEventListener("click", () => $$("#publisherOptions input").forEach(input => { input.checked = false; }));
+$("#publisherApply").addEventListener("click", () => {
+  const selected = $$("#publisherOptions input:checked").map(input => input.value);
+  state.selectedPublishers = selected.length && selected.length === selectablePublishers().length ? null : selected;
+  renderPublisherSummary();
+  $("#publisherFilter").open = false;
+  reloadFilteredView();
+});
+$("#publisherReset").addEventListener("click", () => {
+  state.selectedPublishers = null;
+  renderPublisherOptions();
+  renderPublisherSummary();
+  $("#publisherFilter").open = false;
+  reloadFilteredView();
+});
+document.addEventListener("click", event => {
+  if (!event.target.closest("#publisherFilter")) $("#publisherFilter").open = false;
+});
+$("#publisherFilter").addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    $("#publisherFilter").open = false;
+    $("#publisherSummary").focus();
+  }
+});
 
 function bookParams() {
   const params = new URLSearchParams();
   const q = $("#searchInput").value.trim();
   if (q) params.set("q", q);
   const mappings = [
-    ["publisherFilter", "publisher"], ["typeFilter", "media_type"],
+    ["typeFilter", "media_type"],
     ["statusFilter", "status"], ["editionFilter", "edition"],
     ["sortFilter", "sort"], ["wishlistStateFilter", "wishlist_state"],
     ["ownedFormatFilter", "owned_format"],
     ["dateFromFilter", "date_from"], ["dateToFilter", "date_to"],
   ];
   mappings.forEach(([id, key]) => { if ($(`#${id}`).value) params.set(key, $(`#${id}`).value); });
+  addPublisherParams(params);
   if (state.view === "wishlist") params.set("wishlist", "1");
   if (state.view === "collection") params.set("collection", "1");
   if (state.missingFilter) params.set("missing", state.missingFilter);
@@ -180,6 +237,30 @@ function bookParams() {
   params.set("offset", String(state.offset));
   return params;
 }
+
+async function loadPreferences() {
+  const data = await api("/api/preferences");
+  state.generalAudience = Boolean(data.general_audience);
+  $("#generalAudience").checked = state.generalAudience;
+  renderPublisherSummary();
+}
+
+$("#preferencesForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = $("#preferencesForm button");
+  button.disabled = true;
+  try {
+    const data = await api("/api/preferences", {method: "POST", body: JSON.stringify({general_audience: $("#generalAudience").checked})});
+    state.generalAudience = Boolean(data.general_audience);
+    $("#detailDialog").close();
+    $("#seriesDialog").close();
+    await Promise.all([loadPublishers(), loadStats()]);
+    state.offset = 0;
+    state.seriesOffset = 0;
+    toast("偏好設定已儲存");
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+});
 
 async function loadBooks(resetPage = false) {
   if (resetPage) state.offset = 0;
@@ -436,7 +517,7 @@ async function loadSeries(resetPage = false) {
   });
   const q = $("#searchInput").value.trim();
   if (q) params.set("q", q);
-  if ($("#publisherFilter").value) params.set("publisher", $("#publisherFilter").value);
+  addPublisherParams(params);
   const data = await api(`/api/series?${params}`);
   state.series = data.items;
   state.totalSeries = data.total;
@@ -877,15 +958,19 @@ async function loadLatestJob() {
 }
 
 function clearFilters(reload = true) {
-  ["publisherFilter", "typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => $(`#${id}`).value = "");
+  state.selectedPublishers = null;
+  renderPublisherOptions();
+  renderPublisherSummary();
+  $("#publisherFilter").open = false;
+  ["typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => $(`#${id}`).value = "");
   $("#searchInput").value = "";
   state.missingFilter = "";
   if (state.view === "collection") $("#sortFilter").value = "purchased_desc";
-  if (reload) loadBooks(true).catch(error => toast(error.message, true));
+  if (reload) reloadFilteredView();
 }
 
 function switchView(view) {
-  const availableViews = ["library", "wishlist", "collection", "series", "upcoming", "recommendations", "notifications", "quality", "sources"];
+  const availableViews = ["library", "wishlist", "collection", "series", "upcoming", "recommendations", "notifications", "preferences", "quality", "sources"];
   if (!availableViews.includes(view)) view = "library";
   if (!state.user?.is_admin && ["quality", "sources"].includes(view)) view = "library";
   state.view = view;
@@ -893,12 +978,15 @@ function switchView(view) {
   $$(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.view === view));
   $$(".view-section").forEach(section => section.classList.add("hidden"));
   const libraryMode = ["library", "wishlist", "collection"].includes(view);
+  $("#catalogFilterBar").classList.toggle("hidden", !libraryMode && view !== "series");
+  $("#publisherFilter").open = false;
   $(`#${libraryMode ? "library" : view}View`).classList.remove("hidden");
   const titles = {
     library: ["ALL CATALOG", "Library"], wishlist: ["WISHLIST", "已訂選清單"],
     collection: ["OWNED BOOKS", "我的藏書"],
     series: ["SERIES SHELF", "系列書架"], upcoming: ["RELEASE CALENDAR", "近期上市"],
     recommendations: ["FOR YOU", "為你推薦"],
+    preferences: ["PREFERENCES", "偏好設定"],
     notifications: ["NOTIFICATION SETTINGS", "通知設定"],
     quality: ["DATA CHECK", "資料品質"], sources: ["SOURCE HEALTH", "資料來源"],
   };
@@ -916,6 +1004,7 @@ function switchView(view) {
   if (view === "recommendations") loadRecommendations().catch(error => toast(error.message, true));
   if (view === "notifications") loadNotificationPreferences().catch(error => toast(error.message, true));
   if (view === "quality") loadQuality().catch(error => toast(error.message, true));
+  if (view === "preferences") loadPreferences().catch(error => toast(error.message, true));
 }
 
 let searchTimer;
@@ -926,7 +1015,7 @@ $("#searchInput").addEventListener("input", () => {
     load().catch(error => toast(error.message, true));
   }, 280);
 });
-["publisherFilter", "typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => {
+["typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => {
   $(`#${id}`).addEventListener("change", () => {
     const load = state.view === "series" ? () => loadSeries(true) : () => loadBooks(true);
     load().catch(error => toast(error.message, true));
