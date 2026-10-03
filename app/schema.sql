@@ -271,3 +271,28 @@ VALUES
 UPDATE publishers
 SET enabled = TRUE
 WHERE code IN ('tohan', 'chingwin', 'kadokawa', 'tongli', 'spp', 'egmanga');
+
+CREATE TABLE IF NOT EXISTS collection_items (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    book_id BIGINT UNSIGNED NULL,
+    title VARCHAR(500) NULL,
+    author VARCHAR(500) NULL,
+    publisher_name VARCHAR(200) NULL,
+    media_type VARCHAR(40) NOT NULL DEFAULT 'unknown',
+    isbn VARCHAR(30) NULL,
+    edition_type VARCHAR(100) NULL,
+    release_date DATE NULL,
+    owned_format VARCHAR(20) NOT NULL DEFAULT 'paper',
+    purchased_at DATE NULL,
+    store_name VARCHAR(200) NULL,
+    order_number VARCHAR(200) NULL,
+    paid_price INT UNSIGNED NULL,
+    notes TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY idx_collection_user_book (user_id, book_id),
+    KEY idx_collection_user (user_id),
+    CONSTRAINT fk_collection_book FOREIGN KEY (book_id) REFERENCES books(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

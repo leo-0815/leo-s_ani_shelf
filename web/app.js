@@ -215,9 +215,7 @@ function renderBooks() {
     const selected = Boolean(book.wishlist_state);
     const edition = book.edition_type !== "standard" ? `<span class="edition-chip">${escapeHtml(editionLabels[book.edition_type] || book.edition_type)}</span>` : "";
     const priority = selected && Number(book.wishlist_priority) > 0 ? `<span class="priority-chip p${book.wishlist_priority}">${priorityLabels[book.wishlist_priority]}</span>` : "";
-    const cardAction = state.view === "collection"
-      ? `<span class="owned-format-chip">${escapeHtml(formatLabels[book.wishlist_format] || "已收藏")}</span>`
-      : `<button class="heart ${selected ? "selected" : ""}" data-wishlist="${book.id}" aria-label="${selected ? "移出" : "加入"}訂選清單">${selected ? "♥" : "♡"}</button>`;
+    const cardAction = `<button class="heart ${selected ? "selected" : ""}" data-wishlist="${book.id}" aria-label="${selected ? "移出" : "加入"}訂選清單">${selected ? "♥" : "♡"}</button>`;
     return `<article class="book-card" data-id="${book.id}" tabindex="0">
       <div class="cover">${image}
         <span class="badge ${escapeHtml(book.release_status)}">${escapeHtml(statusLabels[book.release_status] || "未知")}</span>
@@ -257,7 +255,7 @@ async function quickWishlist(bookId) {
   } catch (error) { toast(error.message, true); }
 }
 
-async function openDetail(bookId) {
+async function openDetail(bookId, mode = state.view === "collection" ? "collection" : "wishlist") {
   try {
     const [book, relatedData] = await Promise.all([
       api(`/api/books/${bookId}`),
@@ -265,6 +263,16 @@ async function openDetail(bookId) {
     ]);
     const related = relatedData.items || [];
     state.currentBook = book;
+    state.detailMode = mode;
+    if (mode === "collection" && book.collection) {
+      const c = book.collection;
+      book.wishlist_format = c.owned_format;
+      book.wishlist_purchased_at = c.purchased_at;
+      book.wishlist_store = c.store_name;
+      book.wishlist_order_number = c.order_number;
+      book.wishlist_paid_price = c.paid_price;
+      book.wishlist_notes = c.notes;
+    }
     const cover = safeUrl(book.cover_url);
     const source = safeUrl(book.source_url);
     $("#detailContent").innerHTML = `<div class="detail">
@@ -298,7 +306,7 @@ async function openDetail(bookId) {
             <label>實付價格<input id="wishlistPaidPrice" type="number" min="0" value="${escapeHtml(book.wishlist_paid_price || "")}" placeholder="NT$"></label>
           </div>
           <label>備註<textarea id="wishlistNotes" placeholder="版本、取貨資訊或其他備註…">${escapeHtml(book.wishlist_notes || "")}</textarea></label>
-          <div class="form-actions"><button class="primary" type="submit">${book.wishlist_state ? "儲存訂選" : "加入訂選清單"}</button>${book.wishlist_state ? '<button class="danger" type="button" id="removeWishlist">移除</button>' : ""}</div>
+          <div class="form-actions"><button class="primary" type="submit">${mode === "collection" ? (book.is_owned ? "儲存藏書" : "加入我的藏書") : (book.wishlist_state ? "儲存訂選" : "加入訂選清單")}</button>${mode === "collection" ? (book.is_owned ? '<button class="danger" type="button" id="removeCollection">移除藏書</button>' : "") : (book.wishlist_state ? '<button class="danger" type="button" id="removeWishlist">移出訂選</button>' : "")}</div>
         </form>
         ${book.history?.length ? `<div class="history-list"><h3>日期與狀態異動</h3>${book.history.slice(0, 8).map(item => `<div><time>${escapeHtml((item.observed_at || "").replace("T", " ").slice(0, 16))}</time><span>${escapeHtml(item.field_name)}：${escapeHtml(item.old_value || "無")} → ${escapeHtml(item.new_value || "無")}</span></div>`).join("")}</div>` : ""}
         ${source ? `<a class="source-link" href="${source}" target="_blank" rel="noopener">查看出版社原始頁面 ↗</a>` : ""}
@@ -322,6 +330,12 @@ async function openDetail(bookId) {
         }).join("")}</div>
       </section>` : ""}
     </div>`;
+    if (mode === "collection") {
+      $("#wishlistState").value = "purchased";
+      $("#wishlistState").closest("label").classList.add("hidden");
+      $("#wishlistPriority").closest("label").classList.add("hidden");
+      $("#removeCollection")?.addEventListener("click", removeCollection);
+    }
     $("#wishlistForm").addEventListener("submit", saveWishlist);
     const syncPurchasedDate = () => {
       const purchased = $("#wishlistState").value === "purchased";
@@ -361,7 +375,7 @@ async function addRelatedToWishlist(bookId, currentBookId) {
 async function saveWishlist(event) {
   event.preventDefault();
   const book = state.currentBook;
-  const becamePurchased = book.wishlist_state !== "purchased" && $("#wishlistState").value === "purchased";
+  const becamePurchased = !book.is_owned && book.wishlist_state !== "purchased" && $("#wishlistState").value === "purchased";
   const shouldSuggestFollow = becamePurchased && book.series_title
     && !book.series_following && !$("#followSeries").checked;
   const payload = {
@@ -376,12 +390,26 @@ async function saveWishlist(event) {
     purchased_at: $("#wishlistPurchasedAt").value,
   };
   try {
-    await api(`/api/wishlist/${state.currentBook.id}`, {method: "POST", body: JSON.stringify(payload)});
+    const endpoint = state.detailMode === "collection" ? `/api/collection/book/${state.currentBook.id}` : `/api/wishlist/${state.currentBook.id}`;
+    await api(endpoint, {method: "POST", body: JSON.stringify(payload)});
+    if (state.detailMode === "collection" && book.series_title) {
+      await api("/api/series/follow", {method:"POST", body:JSON.stringify({publisher:book.publisher_code, series_title:book.series_title, media_type:book.media_type, following:payload.follow_series})});
+    }
     $("#detailDialog").close();
-    toast(payload.follow_series ? "訂選已儲存，並開始追蹤系列" : "訂選清單已儲存");
+    toast(state.detailMode === "collection" ? "藏書已儲存" : (payload.state === "purchased" ? "已加入藏書，關注仍保留" : "訂選清單已儲存"));
     await Promise.all([loadBooks(), loadStats()]);
     if (shouldSuggestFollow) showSeriesFollowPrompt(book);
   } catch (error) { toast(error.message, true); }
+}
+
+async function removeCollection() {
+  if (!confirm("確定移除這本藏書？訂選與系列追蹤會保留。")) return;
+  try {
+    await api(`/api/collection/${state.currentBook.collection_id}`, {method:"DELETE"});
+    $("#detailDialog").close();
+    toast("已移除藏書");
+    await Promise.all([loadBooks(), loadStats()]);
+  } catch(error) { toast(error.message, true); }
 }
 
 async function removeWishlist() {

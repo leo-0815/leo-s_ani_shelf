@@ -32,6 +32,7 @@ TABLE_ORDER = (
     "source_backfill_progress",
     "followed_series",
     "wishlist_items",
+    "collection_items",
     "recommendation_dismissals",
     "release_history",
     "notification_deliveries",
