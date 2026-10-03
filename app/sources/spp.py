@@ -61,15 +61,19 @@ class SppSource:
             yield from self._collect_catalog_batches(set(known_keys))
             return
 
-        records = self._parse_schedule(self.list_url, fetch_html(self.list_url))
-        if records:
-            self.latest_cursor = max(
-                record.release_date.isoformat()
-                for record in records
-                if record.release_date
-            )
-        records = [record for record in records if record.source_key not in known_keys]
-        if not records and not known_keys:
+        from .spp_schedule import collect_official_schedule
+        try:
+            records = collect_official_schedule(self._parse_schedule)
+        except RuntimeError as exc:
+            self.errors.append(str(exc))
+            # A bounded catalog fallback keeps known/new releases flowing during schedule outages.
+            urls = sorted(self._sitemap_urls(), key=lambda url: int(re.search(r"/Index/(\d+)", url).group(1)) if re.search(r"/Index/(\d+)", url) else 0, reverse=True)[:80]
+            records = [record for record, _date in self._fetch_catalog_batch(urls) if record]
+        dates = [record.release_date.isoformat() for record in records if record.release_date]
+        if dates:
+            self.latest_cursor = max(dates)
+        # Revisit known rows too: official schedules may postpone a release.
+        if not records:
             raise RuntimeError("尖端上市表沒有解析到有效書目")
         yield records, None
 
@@ -224,6 +228,7 @@ class SppSource:
             volume_label=extract_volume(title),
             series_title=infer_series_title(title),
             source_url=url,
+            rating_raw=self._field(description, r"等\s*級：\s*(普遍級|限制級|保護級|輔導級)"),
         )
         return record, release
 
