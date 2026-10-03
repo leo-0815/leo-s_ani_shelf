@@ -27,6 +27,7 @@ from .auth import (
     oauth_state_cookie,
     session_cookie,
 )
+from .collection import set_owned, remove_owned
 from .config import ROOT, get_settings
 from .catalog_sync import PROTOCOL_VERSION, ingest_catalog_books
 from .models import SYNC_HASH_VERSION
@@ -444,13 +445,16 @@ class Handler(BaseHTTPRequestHandler):
                     public_url=settings.public_url,
                 )
                 self._json({**result, "message": "Discord 測試訊息已送出"})
+            elif match := re.fullmatch(r"/api/collection/book/(\d+)", parsed.path):
+                set_owned(user_id, int(match.group(1)), payload)
+                self._json({"ok": True})
             elif match := re.fullmatch(r"/api/wishlist/(\d+)", parsed.path):
                 set_wishlist(
                     user_id,
                     int(match.group(1)),
                     str(payload.get("state", "wanted")),
                     str(payload.get("notes", "")),
-                    bool(payload.get("follow_series", False)),
+                    bool(payload["follow_series"]) if "follow_series" in payload else None,
                     int(payload.get("priority", 0)),
                     str(payload.get("store_name", "")),
                     str(payload.get("order_number", "")),
@@ -528,6 +532,11 @@ class Handler(BaseHTTPRequestHandler):
             user_id = int(user["id"])
             if parsed.path == "/api/recommendations/dismissals":
                 clear_recommendation_dismissals(user_id)
+                self._json({"ok": True})
+                return
+            owned_match = re.fullmatch(r"/api/collection/(\d+)", parsed.path)
+            if owned_match:
+                remove_owned(user_id, int(owned_match.group(1)))
                 self._json({"ok": True})
                 return
             match = re.fullmatch(r"/api/wishlist/(\d+)", parsed.path)

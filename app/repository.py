@@ -393,6 +393,9 @@ def _find_tongli_matching_row(
 def list_books(
     filters: dict[str, str], user_id: int, limit: int = 100, offset: int = 0
 ) -> dict[str, Any]:
+    if filters.get("collection") == "1":
+        from .collection import list_collection
+        return list_collection(user_id, filters, limit, offset, cloud=True)
     where: list[str] = []
     values: list[Any] = []
     for term in search_terms(filters.get("q", "")):
@@ -486,6 +489,8 @@ def list_books(
                 [user_id, user_id, *values, *order_values, min(max(limit, 1), 200), max(offset, 0)],
             )
             items = [serialize_row(row) for row in cursor.fetchall()]
+    from .collection import decorate_owned
+    decorate_owned(items, user_id)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -518,7 +523,10 @@ def get_book(book_id: int, user_id: int) -> dict[str, Any] | None:
                     (book_id,),
                 )
                 book["history"] = [serialize_row(row) for row in cursor.fetchall()]
-            return book
+    if book:
+        from .collection import decorate_owned
+        decorate_owned([book], user_id)
+    return book
 
 
 def set_wishlist(
@@ -526,7 +534,7 @@ def set_wishlist(
     book_id: int,
     state: str,
     notes: str,
-    follow_series: bool,
+    follow_series: bool | None,
     priority: int = 0,
     store_name: str = "",
     order_number: str = "",
@@ -557,6 +565,12 @@ def set_wishlist(
             purchased_date = resolve_purchased_date(
                 state, requested_purchased_date, existing.get("existing_purchased_at")
             )
+            if state == "purchased":
+                from .collection import save_owned
+                save_owned(cursor, user_id, book_id, dict(owned_format=owned_format,
+                    purchased_at=str(purchased_date), store_name=store_name,
+                    order_number=order_number, paid_price=paid_price, notes=notes))
+                state = "wanted"
             cursor.execute(
                 "INSERT INTO wishlist_items "
                 "(user_id, book_id, state, notes, follow_series, priority, store_name, order_number, "
@@ -573,7 +587,7 @@ def set_wishlist(
                     book_id,
                     state,
                     notes[:5000],
-                    follow_series,
+                    bool(follow_series),
                     priority,
                     store_name[:200] or None,
                     order_number[:200] or None,
@@ -582,7 +596,8 @@ def set_wishlist(
                     purchased_date,
                 ),
             )
-            _set_followed_series_for_book(cursor, user_id, book_id, follow_series)
+            if follow_series is not None:
+                _set_followed_series_for_book(cursor, user_id, book_id, follow_series)
 
 
 def resolve_purchased_date(
@@ -604,8 +619,6 @@ def delete_wishlist(user_id: int, book_id: int) -> None:
                 (user_id, book_id),
             )
             item = cursor.fetchone()
-            if item and item["follow_series"]:
-                _set_followed_series_for_book(cursor, user_id, book_id, False)
             cursor.execute(
                 "DELETE FROM wishlist_items WHERE user_id = %s AND book_id = %s",
                 (user_id, book_id),
@@ -624,14 +637,14 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT COUNT(*) AS purchased_count FROM wishlist_items "
-                "WHERE user_id = %s AND state = 'purchased'",
+                "SELECT COUNT(*) AS purchased_count FROM collection_items "
+                "WHERE user_id = %s",
                 (user_id,),
             )
             purchased_count = int(cursor.fetchone()["purchased_count"])
             cursor.execute(
                 f"SELECT {candidate_columns}, 'same_series' AS recommendation_type "
-                "FROM wishlist_items sw "
+                "FROM collection_items sw "
                 "JOIN books seed ON seed.id = sw.book_id "
                 "JOIN books c ON c.publisher_id = seed.publisher_id "
                 "AND c.series_key = seed.series_key AND c.media_type = seed.media_type "
@@ -639,9 +652,9 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "JOIN publishers p ON p.id = c.publisher_id "
                 "LEFT JOIN wishlist_items cw ON cw.book_id = c.id AND cw.user_id = sw.user_id "
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id AND rd.user_id = sw.user_id "
-                "WHERE sw.user_id = %s AND sw.state = 'purchased' "
+                "WHERE sw.user_id = %s "
                 "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
-                "AND cw.book_id IS NULL AND rd.book_id IS NULL "
+                "AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=sw.user_id) "
                 "ORDER BY sw.updated_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -650,18 +663,18 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
             series_rows = cursor.fetchall()
             cursor.execute(
                 f"SELECT {candidate_columns}, 'same_author' AS recommendation_type "
-                "FROM wishlist_items sw "
+                "FROM collection_items sw "
                 "JOIN books seed ON seed.id = sw.book_id "
                 "JOIN books c ON c.author = seed.author AND c.id <> seed.id "
                 "JOIN publishers p ON p.id = c.publisher_id "
                 "LEFT JOIN wishlist_items cw ON cw.book_id = c.id AND cw.user_id = sw.user_id "
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id AND rd.user_id = sw.user_id "
-                "WHERE sw.user_id = %s AND sw.state = 'purchased' "
+                "WHERE sw.user_id = %s "
                 "AND seed.author IS NOT NULL AND seed.author <> '' "
                 "AND NOT (COALESCE(c.series_key, '') = COALESCE(seed.series_key, '') "
                 "AND c.media_type = seed.media_type) "
                 "AND c.normalized_title <> seed.normalized_title "
-                "AND cw.book_id IS NULL AND rd.book_id IS NULL "
+                "AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=sw.user_id) "
                 "ORDER BY sw.updated_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -679,7 +692,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "JOIN publishers p ON p.id = c.publisher_id "
                 "LEFT JOIN wishlist_items cw ON cw.book_id = c.id AND cw.user_id = fs.user_id "
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id AND rd.user_id = fs.user_id "
-                "WHERE fs.user_id = %s AND cw.book_id IS NULL AND rd.book_id IS NULL "
+                "WHERE fs.user_id = %s AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=fs.user_id) "
                 "ORDER BY fs.created_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -704,13 +717,13 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 " AND scheduled_books.series_key = seed.series_key "
                 " AND scheduled_books.media_type = seed.media_type "
                 " AND scheduled_books.release_status = 'scheduled') AS scheduled_count "
-                "FROM wishlist_items sw "
+                "FROM collection_items sw "
                 "JOIN books seed ON seed.id = sw.book_id "
                 "JOIN publishers p ON p.id = seed.publisher_id "
                 "LEFT JOIN followed_series fs ON fs.user_id = sw.user_id "
                 "AND fs.publisher_id = seed.publisher_id "
                 "AND fs.normalized_series = seed.series_key AND fs.media_type = seed.media_type "
-                "WHERE sw.user_id = %s AND sw.state = 'purchased' "
+                "WHERE sw.user_id = %s "
                 "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
                 "AND fs.publisher_id IS NULL "
                 "GROUP BY seed.publisher_id, p.code, p.name, "
@@ -1074,6 +1087,8 @@ def stats(user_id: int) -> dict[str, int]:
                 (user_id,),
             )
             result.update(cursor.fetchone())
+    from .collection import collection_stats
+    result.update(collection_stats(user_id))
     return {key: int(value or 0) for key, value in result.items()}
 
 
@@ -1114,12 +1129,12 @@ def list_series(
                 "COUNT(DISTINCT b.volume_label) AS volume_count, "
                 "MIN(b.release_date) AS first_date, MAX(b.release_date) AS last_date, "
                 "SUM(b.release_status = 'scheduled') AS scheduled_count, "
-                "SUM(w.state = 'purchased') AS owned_count, "
+                "SUM(c.book_id IS NOT NULL) AS owned_count, "
                 "MAX(fs.normalized_series IS NOT NULL) AS is_following, "
                 "SUBSTRING_INDEX(GROUP_CONCAT(b.cover_url ORDER BY b.release_date DESC "
                 "SEPARATOR '\\n'), '\\n', 1) AS cover_url "
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
-                "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s "
+                "LEFT JOIN collection_items c ON c.book_id = b.id AND c.user_id = %s "
                 "LEFT JOIN followed_series fs ON fs.user_id = %s AND fs.publisher_id = b.publisher_id "
                 "AND fs.normalized_series = b.series_key AND fs.media_type = b.media_type "
                 f"WHERE {clause} GROUP BY b.publisher_id, p.id, p.code, p.name, "
@@ -1171,6 +1186,7 @@ def get_series(
         if numeric_volumes
         else []
     )
+    from .collection import decorate_owned
     return {
         "publisher_code": publisher_code,
         "publisher_name": exact[0]["publisher_name"],
@@ -1179,7 +1195,7 @@ def get_series(
         "media_type": exact[0]["media_type"],
         "numeric_volumes": numeric_volumes,
         "missing_volumes": missing_volumes,
-        "items": exact,
+        "items": decorate_owned(exact, user_id),
     }
 
 
@@ -1280,7 +1296,13 @@ def export_catalog(
     books = list_books(filters, user_id, limit=200, offset=0)
     items = books["items"]
     # Export all rows without raising the public page-size cap.
-    if books["total"] > len(items):
+    if collection_only:
+        while len(items) < books["total"]:
+            page = list_books(filters, user_id, limit=200, offset=len(items))
+            if not page["items"]:
+                break
+            items.extend(page["items"])
+    elif books["total"] > len(items):
         with transaction() as connection:
             with connection.cursor() as cursor:
                 where = (
