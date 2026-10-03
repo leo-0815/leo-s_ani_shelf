@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from .db import transaction
+from .preferences import visible_book_sql, visible_publisher_sql, publisher_visible
 from .models import (
     CONTENT_RATINGS,
     BookRecord,
@@ -400,8 +401,9 @@ def list_books(
         values.extend([like, like, f"%{isbn_term}%", like])
     if filters.get("status") == "scheduled_undated":
         where.append("b.release_status = 'scheduled' AND b.release_date IS NULL")
+    from .filters import add_publisher_filter
+    add_publisher_filter(filters, where, values)
     for key, column in (
-        ("publisher", "p.code"),
         ("media_type", "b.media_type"),
         ("edition", "b.edition_type"),
         ("wishlist_state", "w.state"),
@@ -508,7 +510,7 @@ def get_book(book_id: int, user_id: int) -> dict[str, Any] | None:
                 "AND fs.normalized_series = b.series_key "
                 "AND fs.media_type = b.media_type LIMIT 1), '') AS series_follow_scope "
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
-                "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s WHERE b.id = %s",
+                "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s WHERE b.id = %s" + f" AND {visible_publisher_sql()}",
                 (user_id, user_id, book_id),
             )
             book = serialize_row(cursor.fetchone())
@@ -651,6 +653,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "WHERE sw.user_id = %s "
                 "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
                 "AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=sw.user_id) "
+                f"AND {visible_publisher_sql()} AND {visible_book_sql('seed')} "
                 "ORDER BY sw.updated_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -671,6 +674,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "AND c.media_type = seed.media_type) "
                 "AND c.normalized_title <> seed.normalized_title "
                 "AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=sw.user_id) "
+                f"AND {visible_publisher_sql()} AND {visible_book_sql('seed')} "
                 "ORDER BY sw.updated_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -689,6 +693,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "LEFT JOIN wishlist_items cw ON cw.book_id = c.id AND cw.user_id = fs.user_id "
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id AND rd.user_id = fs.user_id "
                 "WHERE fs.user_id = %s AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=fs.user_id) "
+                f"AND {visible_publisher_sql()} "
                 "ORDER BY fs.created_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -722,6 +727,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "WHERE sw.user_id = %s "
                 "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
                 "AND fs.publisher_id IS NULL "
+                f"AND {visible_publisher_sql()} "
                 "GROUP BY seed.publisher_id, p.code, p.name, "
                 "seed.series_key, seed.media_type "
                 "ORDER BY MAX(sw.updated_at) DESC LIMIT 20",
@@ -810,7 +816,7 @@ def list_book_recommendations(
             cursor.execute(
                 "SELECT id, publisher_id, title, series_title, series_key, media_type, "
                 "volume_label, author "
-                "FROM books WHERE id = %s",
+                "FROM books WHERE id = %s" + f" AND {visible_book_sql('')}",
                 (book_id,),
             )
             seed = cursor.fetchone()
@@ -827,6 +833,7 @@ def list_book_recommendations(
                     "WHERE c.publisher_id = %s AND c.series_key = %s "
                     "AND c.media_type = %s AND c.id <> %s "
                     "AND w.book_id IS NULL AND rd.book_id IS NULL "
+                    f"AND {visible_publisher_sql()} "
                     "ORDER BY (c.release_status = 'scheduled') DESC, "
                     "c.release_date DESC LIMIT %s",
                     (
@@ -853,6 +860,7 @@ def list_book_recommendations(
                     "AND NOT (COALESCE(c.series_key, '') = COALESCE(%s, '') "
                     "AND c.media_type = %s) "
                     "AND w.book_id IS NULL AND rd.book_id IS NULL "
+                    f"AND {visible_publisher_sql()} "
                     "ORDER BY (c.release_status = 'scheduled') DESC, "
                     "c.release_date DESC LIMIT %s",
                     (
@@ -1030,16 +1038,18 @@ def stats(user_id: int) -> dict[str, int]:
                 "SUM(release_status = 'available') AS available, "
                 "SUM(release_status = 'unknown') AS unknown, "
                 "SUM(release_status = 'scheduled' AND release_date IS NULL) "
-                "AS scheduled_undated FROM books"
+                "AS scheduled_undated FROM books " + f"WHERE {visible_book_sql('')}"
             )
             result = cursor.fetchone()
             cursor.execute(
-                "SELECT COUNT(*) AS wishlist FROM wishlist_items WHERE user_id = %s",
+                "SELECT COUNT(*) AS wishlist FROM wishlist_items w JOIN books b ON b.id=w.book_id "
+                f"WHERE w.user_id = %s AND {visible_book_sql()}",
                 (user_id,),
             )
             result.update(cursor.fetchone())
             cursor.execute(
-                "SELECT COUNT(*) AS followed_series FROM followed_series WHERE user_id = %s",
+                "SELECT COUNT(*) AS followed_series FROM followed_series fs JOIN publishers p ON p.id=fs.publisher_id "
+                f"WHERE fs.user_id = %s AND {visible_publisher_sql()}",
                 (user_id,),
             )
             result.update(cursor.fetchone())
@@ -1072,9 +1082,8 @@ def list_series(
         for term in search_terms(filters["q"]):
             where.append("(b.series_title LIKE %s OR b.author LIKE %s)")
             values.extend([f"%{term}%", f"%{term}%"])
-    if filters.get("publisher"):
-        where.append("p.code = %s")
-        values.append(filters["publisher"])
+    from .filters import add_publisher_filter
+    add_publisher_filter(filters, where, values)
     clause = " AND ".join(where)
     with transaction() as connection:
         with connection.cursor() as cursor:
@@ -1120,6 +1129,8 @@ def get_series(
     series_title: str,
     media_type: str = "",
 ) -> dict[str, Any] | None:
+    if not publisher_visible(publisher_code):
+        return None
     requested_key = series_key(series_title, publisher_code)
     with transaction() as connection:
         with connection.cursor() as cursor:
@@ -1192,7 +1203,7 @@ def quality_report(limit: int = 50) -> dict[str, Any]:
         with connection.cursor() as cursor:
             counts: dict[str, int] = {}
             for key, condition in conditions.items():
-                cursor.execute(f"SELECT COUNT(*) AS count FROM books b WHERE {condition}")
+                cursor.execute(f"SELECT COUNT(*) AS count FROM books b WHERE ({condition}) AND {visible_book_sql()}")
                 counts[key] = int(cursor.fetchone()["count"])
             combined = " OR ".join(conditions.values())
             cursor.execute(
@@ -1205,7 +1216,7 @@ def quality_report(limit: int = 50) -> dict[str, Any]:
                 "IF(b.media_type = 'unknown', 'unknown_type', NULL), "
                 "IF(b.release_date < '2010-01-01', 'suspicious_date', NULL)) AS issues "
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
-                f"WHERE {combined} ORDER BY b.updated_at DESC LIMIT %s",
+                f"WHERE ({combined}) AND {visible_publisher_sql()} ORDER BY b.updated_at DESC LIMIT %s",
                 (min(max(limit, 1), 200),),
             )
             items = [serialize_row(row) for row in cursor.fetchall()]

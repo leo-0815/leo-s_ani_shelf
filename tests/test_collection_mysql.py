@@ -85,6 +85,48 @@ class CollectionMySQLTests(unittest.TestCase):
                 self.assertEqual(list_collection(1,{})["total"],2)
                 remove_owned(2,custom_id)
                 self.assertEqual(get_custom(1,custom_id)["title"],"私人測試書")
+                # PR27 uses the same real MySQL parser with isolated books/preferences.
+                from app.preferences import visibility_scope, get_preferences, set_preferences
+                from app.repository import list_books, upcoming_books, list_publishers, quality_report
+                with connection.cursor() as cursor:
+                    cursor.execute("CREATE TEMPORARY TABLE _smoke_user_preferences LIKE user_preferences")
+                    cursor.execute("ALTER TABLE _smoke_user_preferences RENAME TO user_preferences")
+                with patch("app.preferences.transaction", local_transaction):
+                    self.assertFalse(get_preferences(1)["general_audience"])
+                    set_preferences(1, {"general_audience": True})
+                    self.assertTrue(get_preferences(1)["general_audience"])
+                    self.assertFalse(get_preferences(2)["general_audience"])
+                upsert_book(BookRecord(publisher_code="chingwin",source_key="hidden",title="青文測試小說",
+                                       series_title="青文測試",media_type="novel",author="測試作者",
+                                       release_date=date.today()+timedelta(days=7),release_precision="day",
+                                       source_url="https://example.test/hidden"))
+                visible_total=list_books({},1)["total"]
+                hidden_book=list_books({"publisher":"chingwin"},1)["items"][0]
+                set_owned(1,hidden_book["id"],{})
+                with visibility_scope(True):
+                    self.assertEqual(list_books({},1)["total"],visible_total-1)
+                    self.assertEqual(list_books({"publishers":"chingwin,spp"},1)["total"],visible_total-1)
+                    self.assertEqual(list_books({"publishers":"none"},1)["total"],0)
+                    self.assertIsNone(get_book(hidden_book["id"],1))
+                    self.assertEqual(list_collection(1,{"publishers":"chingwin"})["total"],0)
+                    self.assertFalse(any(b["publisher_code"]=="chingwin" for b in upcoming_books(1)))
+                    self.assertEqual(list_series({"publishers":"chingwin"},1)["total"],0)
+                    self.assertIn("items",quality_report())
+                    self.assertIn("purchased",stats(1))
+                self.assertTrue(get_book(hidden_book["id"],1)["is_owned"])
+                # General-mode recommendation self-joins need real read-only tables.
+                with connection.cursor() as cursor:
+                    cursor.execute("ALTER TABLE books RENAME TO _smoke_books")
+                    cursor.execute("ALTER TABLE collection_items RENAME TO _smoke_collection_items")
+                try:
+                    with visibility_scope(True):
+                        result=list_recommendations(1)
+                        self.assertFalse(any(b["publisher_code"]=="chingwin" for b in result["items"]))
+                        self.assertFalse(any(b["publisher_code"]=="chingwin" for b in result["series_prompts"]))
+                finally:
+                    with connection.cursor() as cursor:
+                        cursor.execute("ALTER TABLE _smoke_books RENAME TO books")
+                        cursor.execute("ALTER TABLE _smoke_collection_items RENAME TO collection_items")
         finally:
             connection.rollback()
             connection.close()

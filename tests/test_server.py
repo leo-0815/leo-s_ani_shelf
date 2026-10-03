@@ -53,6 +53,38 @@ class ServerInstanceTests(unittest.TestCase):
 
 
 class ServerAuthorizationTests(unittest.TestCase):
+    def test_preferences_save_targets_current_user_not_payload_user(self) -> None:
+        handler = self.handler()
+        handler.path = "/api/preferences"
+        handler._require_user = lambda: {"id": 7, "role": "user"}
+        handler._require_csrf = lambda user: True
+        handler._body = lambda: {"general_audience": True, "user_id": 99}
+        with patch("app.server.set_preferences", return_value={"general_audience": True}) as save:
+            handler.do_POST()
+        save.assert_called_once_with(7, {"general_audience": True, "user_id": 99})
+        self.assertEqual(handler.responses[-1][1], 200)
+
+    def test_preferences_write_is_csrf_protected(self) -> None:
+        handler = self.handler()
+        handler.path = "/api/preferences"
+        handler._require_user = lambda: {"id": 7, "role": "user"}
+        handler._require_csrf = lambda user: False
+        with patch("app.server.set_preferences") as save:
+            handler.do_POST()
+        save.assert_not_called()
+
+    def test_authenticated_browsing_scopes_do_not_leak_between_accounts(self) -> None:
+        from urllib.parse import urlparse
+        from app.preferences import publisher_visible
+        handler = self.handler()
+        seen = []
+        handler._visible_authenticated_get = lambda parsed, user: seen.append(publisher_visible("chingwin"))
+        handler._authenticated_get(urlparse("/api/books"), {"id": 7, "general_audience": True})
+        handler._authenticated_get(urlparse("/api/books"), {"id": 8, "general_audience": False})
+        handler._authenticated_get(urlparse("/api/export.json"), {"id": 7, "general_audience": True})
+        self.assertEqual(seen, [False, True, True])
+        self.assertTrue(publisher_visible("chingwin"))
+
     def handler(self):
         handler = object.__new__(Handler)
         handler.headers = {}

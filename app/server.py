@@ -28,6 +28,7 @@ from .auth import (
     session_cookie,
 )
 from .collection import set_owned, remove_owned, save_custom, get_custom
+from .preferences import get_preferences, set_preferences, visibility_scope, publisher_visible
 from .config import ROOT, get_settings
 from .catalog_sync import PROTOCOL_VERSION, ingest_catalog_books
 from .models import SYNC_HASH_VERSION
@@ -191,8 +192,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"Server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _authenticated_get(self, parsed: Any, user: dict[str, Any]) -> None:
+        # Backups retain hidden records; browsing uses the account preference.
+        enabled = bool(user.get("general_audience")) and not parsed.path.startswith("/api/export.")
+        with visibility_scope(enabled):
+            self._visible_authenticated_get(parsed, user)
+
+    def _visible_authenticated_get(self, parsed: Any, user: dict[str, Any]) -> None:
         user_id = int(user["id"])
-        if parsed.path == "/api/books":
+        if parsed.path == "/api/preferences":
+            self._json({"general_audience": bool(user.get("general_audience"))})
+        elif parsed.path == "/api/books":
             query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
             self._json(list_books(query, user_id, int(query.get("limit", "100")), int(query.get("offset", "0"))))
         elif match := re.fullmatch(r"/api/collection/custom/(\d+)", parsed.path):
@@ -204,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             self._json({"items": list_book_recommendations(user_id, int(match.group(1)), int(query.get("limit", ["8"])[0]))})
         elif parsed.path == "/api/publishers":
-            items = list_publishers()
+            items = [item for item in list_publishers() if publisher_visible(item["code"])]
             if not user.get("is_admin"):
                 public_fields = {"code", "name", "enabled", "book_count"}
                 items = [{key: value for key, value in item.items() if key in public_fields} for item in items]
@@ -401,7 +410,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             payload = self._body()
             user_id = int(user["id"])
-            if parsed.path == "/api/update":
+            if parsed.path == "/api/preferences":
+                self._json(set_preferences(user_id, payload))
+            elif parsed.path == "/api/update":
                 if not self._require_admin(user):
                     return
                 job_id = create_job(str(payload.get("source", "all")), force=bool(payload.get("force", True)))

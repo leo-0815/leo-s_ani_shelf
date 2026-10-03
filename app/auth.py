@@ -126,9 +126,10 @@ def current_user(cookie_header: str | None) -> dict[str, Any] | None:
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT u.id, u.email, u.display_name, u.avatar_url, u.role, "
-                "s.csrf_token, s.expires_at, "
+                "s.csrf_token, s.expires_at, COALESCE(up.general_audience, FALSE) AS general_audience, "
                 "TIMESTAMPDIFF(MINUTE, s.last_seen_at, CURRENT_TIMESTAMP) >= %s AS should_touch "
                 "FROM user_sessions s JOIN users u ON u.id = s.user_id "
+                "LEFT JOIN user_preferences up ON up.user_id = u.id "
                 "WHERE s.token_hash = %s AND s.expires_at >= CURRENT_TIMESTAMP "
                 "AND u.is_active = TRUE",
                 (settings.session_touch_minutes, token_hash(token)),
@@ -143,6 +144,7 @@ def current_user(cookie_header: str | None) -> dict[str, Any] | None:
         return None
     user["id"] = int(user["id"])
     user["is_admin"] = user["role"] == "admin"
+    user["general_audience"] = bool(user.get("general_audience"))
     user.pop("expires_at", None)
     user.pop("should_touch", None)
     return user
