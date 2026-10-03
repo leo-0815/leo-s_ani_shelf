@@ -256,6 +256,8 @@ def ensure_schema() -> None:
             _migrate_followed_series_keys(cursor)
             _seed_series_aliases(cursor)
             _apply_approved_series_aliases(cursor)
+            from .preferences import migrate_general_audience_default
+            migrate_general_audience_default(cursor, cloud=True)
 
 
 def _ensure_column(cursor: Any, table: str, column: str, definition: str) -> None:

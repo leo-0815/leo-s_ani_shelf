@@ -117,15 +117,49 @@ class PublisherFilterTests(unittest.TestCase):
             self.assertIn("code <> 'chingwin'", sql)
             self.assertLess(sql.index("code <> 'chingwin'"), sql.index("LIMIT"))
 
-    def test_preferences_are_private_persistent_boolean_and_default_off(self):
+    def test_preferences_are_private_persistent_boolean_and_default_on(self):
         with patch("app.preferences.transaction") as tx:
             cursor = tx.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
             cursor.fetchone.return_value = None
-            self.assertEqual(get_preferences(7), {"general_audience": False})
+            self.assertEqual(get_preferences(7), {"general_audience": True})
             self.assertEqual(cursor.execute.call_args.args[1], (7,))
             self.assertEqual(set_preferences(7, {"general_audience": True}), {"general_audience": True})
             self.assertEqual(cursor.execute.call_args.args[1], (7, True))
+            cursor.fetchone.return_value = {"general_audience": False}
+            self.assertFalse(get_preferences(7)["general_audience"])
+            cursor.fetchone.return_value = {"role": "admin", "general_audience": None}
+            self.assertFalse(get_preferences(7)["general_audience"])
+            cursor.fetchone.return_value = {"role": "admin", "general_audience": True}
+            self.assertTrue(get_preferences(7)["general_audience"])
             for bad in ("false", 1, None):
                 with self.assertRaises(ValueError):
                     set_preferences(7, {"general_audience": bad})
+
+    def test_default_migration_resets_existing_accounts_once(self):
+        from app.preferences import migrate_general_audience_default
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"column_default": "0"}
+        cursor.rowcount = 1
+        self.assertTrue(migrate_general_audience_default(cursor, cloud=True))
+        sql = [c.args[0] for c in cursor.execute.call_args_list]
+        self.assertTrue(any("SET DEFAULT 1" in q for q in sql))
+        self.assertTrue(any("WHERE u.role = 'user'" in q for q in sql))
+        self.assertTrue(any("SELECT id, TRUE FROM users" in q for q in sql))
+        self.assertTrue(any("WHERE role = 'user'" in q for q in sql))
+        cursor.reset_mock()
+        cursor.fetchone.return_value = {"column_default": "1"}
+        cursor.rowcount = 0
+        self.assertFalse(migrate_general_audience_default(cursor, cloud=True))
+        sql = [c.args[0] for c in cursor.execute.call_args_list]
+        self.assertFalse(any("UPDATE user_preferences" in q or "ALTER TABLE" in q for q in sql))
+
+    def test_local_default_migration_uses_local_profile_only(self):
+        from app.preferences import migrate_general_audience_default
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"column_default": "1"}
+        cursor.rowcount = 1
+        self.assertTrue(migrate_general_audience_default(cursor, cloud=False))
+        sql = [c.args[0] for c in cursor.execute.call_args_list]
+        self.assertTrue(any("VALUES (0, TRUE)" in q for q in sql))
+        self.assertFalse(any("FROM users" in q for q in sql))
 

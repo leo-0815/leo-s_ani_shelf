@@ -11,7 +11,7 @@ const assert = require("node:assert/strict");
   const books = publishers.flatMap((p,i)=>Array.from({length:60},(_,n)=>({id:i*60+n+1,title:p.name+" 測試小說 "+n,
     publisher_code:p.code,publisher_name:p.name,author:"作者",media_type:"novel",release_status:"available",
     release_date:"2026-10-04",edition_type:"standard",series_title:"系列"+n,wishlist_state:"wanted",is_owned:true})));
-  let general = false;
+  let general = process.env.ANISHELF_UI_DEFAULT_ONLY === "1";
   function filtered(params) {
     const codes = params.get("publishers");
     return books.filter(b=>(!general || b.publisher_code!=="chingwin") && (!codes || codes.split(",").includes(b.publisher_code)) &&
@@ -50,6 +50,21 @@ const assert = require("node:assert/strict");
   try {
     await page.goto("http://anishelf.test/");
     await page.locator(".book-card").first().waitFor();
+    if(process.env.ANISHELF_UI_DEFAULT_ONLY === "1") {
+      await page.locator("#publisherSummary").click();
+      assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),0);
+      await page.locator("#publisherSummary").press("Escape");
+      await page.locator('[data-view="preferences"]').click();
+      assert.equal(await page.locator("#generalAudience").isChecked(),true);
+      await page.locator("#generalAudience").uncheck();
+      await Promise.all([page.waitForResponse(r=>r.url().includes("/api/publishers")),page.locator('#preferencesForm [type="submit"]').click()]);
+      await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")),page.locator('[data-view="library"]').click()]);
+      await page.locator("#publisherSummary").click();
+      assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),1);
+      assert.deepEqual(errors,[]);
+      console.log("Default general-audience UI OK: checked at first load, Chingwin hidden, opt-out restores publisher.");
+      return;
+    }
     for(const count of [1,2,3,4,5]) {
       await pick(publishers.slice(0,count).map(p=>p.code));
       assert.equal(latest().params.get("publishers").split(",").length,count);
