@@ -4,7 +4,8 @@ import gzip
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
+from dataclasses import replace
 from typing import Any, Iterator
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
@@ -64,10 +65,11 @@ class SppSource:
         from .spp_schedule import collect_official_schedule
         try:
             records = collect_official_schedule(self._parse_schedule)
+            records = self._enrich_schedule(records)
         except RuntimeError as exc:
             self.errors.append(str(exc))
             # A bounded catalog fallback keeps known/new releases flowing during schedule outages.
-            urls = sorted(self._sitemap_urls(), key=lambda url: int(re.search(r"/Index/(\d+)", url).group(1)) if re.search(r"/Index/(\d+)", url) else 0, reverse=True)[:80]
+            urls = self._recent_catalog_urls(80)
             records = [record for record, _date in self._fetch_catalog_batch(urls) if record]
         dates = [record.release_date.isoformat() for record in records if record.release_date]
         if dates:
@@ -76,6 +78,31 @@ class SppSource:
         if not records:
             raise RuntimeError("尖端上市表沒有解析到有效書目")
         yield records, None
+
+    def _recent_catalog_urls(self, limit: int = 40) -> list[str]:
+        def product_id(url: str) -> int:
+            match = re.search(r"/Index/(\d+)", url)
+            return int(match[1]) if match else 0
+        return sorted(self._sitemap_urls(), key=product_id, reverse=True)[:limit]
+
+    def _enrich_schedule(self, records: list[BookRecord]) -> list[BookRecord]:
+        try:
+            details = {record.source_key: record for record, _release in
+                       self._fetch_catalog_batch(self._recent_catalog_urls()) if record}
+        except Exception as exc:
+            self.errors.append(f"尖端商品資料補充失敗（官方出書表仍保留）：{exc}")
+            return records
+        result = {}
+        for scheduled in records:
+            detail = details.pop(scheduled.source_key, None)
+            result[scheduled.source_key] = replace(
+                detail, release_date=scheduled.release_date,
+                release_precision=scheduled.release_precision,
+            ) if detail else scheduled
+        for key, record in details.items():
+            if record.release_date and record.release_date >= date.today() - timedelta(days=30):
+                result[key] = record
+        return list(result.values())
 
     def _collect_catalog_batches(
         self,

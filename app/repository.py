@@ -54,6 +54,8 @@ def serialize_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
             result[key] = value.isoformat()
         else:
             result[key] = value
+    if "series_follow_scope" in result:
+        result["series_following"] = bool(result["series_follow_scope"])
     return result
 
 
@@ -107,16 +109,9 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
                     values,
                 )
                 book_id = int(cursor.lastrowid)
-                normalized_series = data.get("series_key") or ""
-                if normalized_series:
-                    cursor.execute(
-                        "INSERT IGNORE INTO wishlist_items "
-                        "(user_id, book_id, state, follow_series) "
-                        "SELECT user_id, %s, 'wanted', TRUE FROM followed_series "
-                        "WHERE publisher_id = %s AND normalized_series = %s "
-                        "AND media_type = %s",
-                        (book_id, publisher_id, normalized_series, data["media_type"]),
-                    )
+                from .series_follow import add_discovered_book
+                add_discovered_book(cursor, book_id, publisher_id, data.get("series_key") or "",
+                                    data["media_type"], data["release_status"], cloud=True)
                 _record_catalog_change(
                     cursor,
                     book_id,
@@ -478,10 +473,10 @@ def list_books(
                 "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
                 "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
                 "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
-                "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.user_id = %s "
+                "COALESCE((SELECT fs.follow_scope FROM followed_series fs WHERE fs.user_id = %s "
                 "AND fs.publisher_id = b.publisher_id "
                 "AND fs.normalized_series = b.series_key "
-                "AND fs.media_type = b.media_type) AS series_following "
+                "AND fs.media_type = b.media_type LIMIT 1), '') AS series_follow_scope "
                 + base
                 + clause
                 + f" ORDER BY {order_by} "
@@ -508,10 +503,10 @@ def get_book(book_id: int, user_id: int) -> dict[str, Any] | None:
                 "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
                 "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
                 "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
-                "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.user_id = %s "
+                "COALESCE((SELECT fs.follow_scope FROM followed_series fs WHERE fs.user_id = %s "
                 "AND fs.publisher_id = b.publisher_id "
                 "AND fs.normalized_series = b.series_key "
-                "AND fs.media_type = b.media_type) AS series_following "
+                "AND fs.media_type = b.media_type LIMIT 1), '') AS series_follow_scope "
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                 "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s WHERE b.id = %s",
                 (user_id, user_id, book_id),
@@ -541,6 +536,7 @@ def set_wishlist(
     paid_price: int | None = None,
     owned_format: str = "paper",
     purchased_at: str | None = None,
+    follow_scope: str = "future",
 ) -> None:
     allowed = {"wanted", "preordered", "purchased", "paused"}
     if state not in allowed:
@@ -597,7 +593,7 @@ def set_wishlist(
                 ),
             )
             if follow_series is not None:
-                _set_followed_series_for_book(cursor, user_id, book_id, follow_series)
+                _set_followed_series_for_book(cursor, user_id, book_id, follow_series, follow_scope)
 
 
 def resolve_purchased_date(
@@ -895,37 +891,9 @@ def clear_recommendation_dismissals(user_id: int) -> None:
             cursor.execute("DELETE FROM recommendation_dismissals WHERE user_id = %s", (user_id,))
 
 
-def _set_followed_series_for_book(
-    cursor: Any, user_id: int, book_id: int, following: bool
-) -> None:
-    cursor.execute(
-        "SELECT publisher_id, series_title, series_key, media_type FROM books WHERE id = %s",
-        (book_id,),
-    )
-    book = cursor.fetchone()
-    if not book or not book["series_title"]:
-        return
-    normalized = book["series_key"] or series_key(book["series_title"])
-    if following:
-        cursor.execute(
-            "INSERT INTO followed_series "
-            "(user_id, publisher_id, series_title, normalized_series, media_type) "
-            "VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE "
-            "series_title = VALUES(series_title), media_type = VALUES(media_type)",
-            (user_id, book["publisher_id"], book["series_title"], normalized, book["media_type"]),
-        )
-        cursor.execute(
-            "INSERT IGNORE INTO wishlist_items (user_id, book_id, state, follow_series) "
-            "SELECT %s, id, 'wanted', FALSE FROM books WHERE publisher_id = %s "
-            "AND series_key = %s AND media_type = %s AND release_status = 'scheduled'",
-            (user_id, book["publisher_id"], normalized, book["media_type"]),
-        )
-    else:
-        cursor.execute(
-            "DELETE FROM followed_series WHERE user_id = %s "
-            "AND publisher_id = %s AND normalized_series = %s AND media_type = %s",
-            (user_id, book["publisher_id"], normalized, book["media_type"]),
-        )
+def _set_followed_series_for_book(cursor: Any, user_id: int, book_id: int, following: bool, scope: str = "future") -> None:
+    from .series_follow import follow_for_book
+    follow_for_book(cursor, user_id, book_id, following, scope, cloud=True)
 
 
 def list_publishers() -> list[dict[str, Any]]:
@@ -1161,10 +1129,10 @@ def get_series(
                 "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
                 "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
                 "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
-                "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.user_id = %s "
+                "COALESCE((SELECT fs.follow_scope FROM followed_series fs WHERE fs.user_id = %s "
                 "AND fs.publisher_id = b.publisher_id "
                 "AND fs.normalized_series = b.series_key "
-                "AND fs.media_type = b.media_type) AS series_following "
+                "AND fs.media_type = b.media_type LIMIT 1), '') AS series_follow_scope "
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                 "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s "
                 "WHERE p.code = %s AND b.series_key = %s AND (%s = '' OR b.media_type = %s) "
@@ -1199,46 +1167,17 @@ def get_series(
     }
 
 
-def set_series_follow(
-    user_id: int,
-    publisher_code: str,
-    series_title: str,
-    media_type: str,
-    following: bool,
-) -> None:
+def set_series_follow(user_id: int, publisher_code: str, series_title: str,
+                      media_type: str, following: bool, scope: str = "future") -> int:
+    from .series_follow import set_follow
     normalized = series_key(series_title, publisher_code)
     if not normalized:
         raise ValueError("系列名稱不可為空")
     with transaction() as connection:
         publisher_id = get_publisher_id(connection, publisher_code)
         with connection.cursor() as cursor:
-            if following:
-                cursor.execute(
-                    "INSERT INTO followed_series "
-                    "(user_id, publisher_id, series_title, normalized_series, media_type) "
-                    "VALUES (%s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE "
-                    "series_title = VALUES(series_title), media_type = VALUES(media_type)",
-                    (
-                        user_id,
-                        publisher_id,
-                        canonical_series_title(series_title, publisher_code)[:500],
-                        normalized,
-                        media_type[:40],
-                    ),
-                )
-                cursor.execute(
-                    "INSERT IGNORE INTO wishlist_items (user_id, book_id, state, follow_series) "
-                    "SELECT %s, id, 'wanted', FALSE FROM books WHERE publisher_id = %s "
-                    "AND series_key = %s AND media_type = %s "
-                    "AND release_status = 'scheduled'",
-                    (user_id, publisher_id, normalized, media_type),
-                )
-            else:
-                cursor.execute(
-                    "DELETE FROM followed_series WHERE user_id = %s AND publisher_id = %s "
-                    "AND normalized_series = %s AND media_type = %s",
-                    (user_id, publisher_id, normalized, media_type),
-                )
+            return set_follow(cursor,user_id,publisher_id,normalized,media_type,
+                              canonical_series_title(series_title,publisher_code),following,scope,cloud=True)
 
 
 def quality_report(limit: int = 50) -> dict[str, Any]:
@@ -1318,16 +1257,19 @@ def export_catalog(
                     "w.priority AS wishlist_priority, w.store_name AS wishlist_store, "
                     "w.order_number AS wishlist_order_number, w.paid_price AS wishlist_paid_price, "
                     "w.owned_format AS wishlist_format, w.purchased_at AS wishlist_purchased_at, "
-                    "EXISTS(SELECT 1 FROM followed_series fs WHERE fs.user_id = %s "
+                    "COALESCE((SELECT fs.follow_scope FROM followed_series fs WHERE fs.user_id = %s "
                     "AND fs.publisher_id = b.publisher_id "
                     "AND fs.normalized_series = b.series_key "
-                    "AND fs.media_type = b.media_type) AS series_following "
+                    "AND fs.media_type = b.media_type LIMIT 1), '') AS series_follow_scope "
                     "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                     f"LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s {where} "
                     "ORDER BY b.release_date DESC",
                     (user_id, user_id),
                 )
                 items = [serialize_row(row) for row in cursor.fetchall()]
+    if not collection_only:
+        from .collection import decorate_owned
+        decorate_owned(items, user_id)
     return {
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "wishlist_only": wishlist_only,

@@ -251,6 +251,7 @@ def collect_events(
                 "JOIN publishers p ON p.id = b.publisher_id "
                 "WHERE u.role = 'admin' AND u.is_active = TRUE "
                 "AND w.state IN ('wanted', 'preordered') "
+                "AND NOT EXISTS(SELECT 1 FROM collection_items c WHERE c.book_id=b.id AND c.user_id=u.id) "
                 "AND b.release_precision = 'day' "
                 "AND b.release_date BETWEEN %s AND %s "
                 "ORDER BY b.release_date, b.title",
@@ -269,6 +270,7 @@ def collect_events(
                 "JOIN users u ON u.id = w.user_id "
                 "WHERE u.role = 'admin' AND u.is_active = TRUE "
                 "AND w.state IN ('wanted', 'preordered') "
+                "AND NOT EXISTS(SELECT 1 FROM collection_items c WHERE c.book_id=b.id AND c.user_id=u.id) "
                 "AND rh.field_name = 'release_date' AND rh.observed_at >= %s "
                 "AND NOT (rh.old_value <=> rh.new_value) ORDER BY rh.id",
                 (since,),
@@ -281,11 +283,14 @@ def collect_events(
                 "p.name AS publisher_name FROM users u "
                 "JOIN followed_series fs ON fs.user_id = u.id "
                 "JOIN books b ON b.publisher_id = fs.publisher_id "
-                "AND LEFT(LOWER(b.series_title), 190) = fs.normalized_series "
+                "AND b.series_key = fs.normalized_series AND b.media_type = fs.media_type "
                 "JOIN publishers p ON p.id = b.publisher_id "
                 "WHERE u.role = 'admin' AND u.is_active = TRUE "
+                "AND b.first_seen_at >= fs.created_at "
+                "AND (b.release_status = 'scheduled' OR b.release_date >= %s) "
+                "AND NOT EXISTS(SELECT 1 FROM collection_items c WHERE c.book_id=b.id AND c.user_id=u.id) "
                 "AND b.first_seen_at >= %s ORDER BY b.first_seen_at, b.id",
-                (since,),
+                (today - timedelta(days=30), since),
             )
             events.extend(followed_series_event(row) for row in cursor.fetchall())
     return _unique_events(events)
@@ -315,6 +320,7 @@ def collect_email_events(
                 "JOIN publishers p ON p.id = b.publisher_id "
                 "WHERE np.email_enabled = TRUE AND u.is_active = TRUE "
                 "AND w.state IN ('wanted', 'preordered') "
+                "AND NOT EXISTS(SELECT 1 FROM collection_items c WHERE c.book_id=b.id AND c.user_id=u.id) "
                 "AND b.release_precision = 'day' "
                 "AND b.release_date BETWEEN %s AND %s "
                 "ORDER BY u.id, b.release_date, b.title",
@@ -336,6 +342,7 @@ def collect_email_events(
                 "WHERE np.email_enabled = TRUE "
                 "AND np.notify_release_date_changes = TRUE AND u.is_active = TRUE "
                 "AND w.state IN ('wanted', 'preordered') "
+                "AND NOT EXISTS(SELECT 1 FROM collection_items c WHERE c.book_id=b.id AND c.user_id=u.id) "
                 "AND rh.field_name = 'release_date' AND rh.observed_at >= %s "
                 "AND NOT (rh.old_value <=> rh.new_value) ORDER BY u.id, rh.id",
                 (since,),
@@ -349,12 +356,15 @@ def collect_email_events(
                 "JOIN users u ON u.id = np.user_id "
                 "JOIN followed_series fs ON fs.user_id = u.id "
                 "JOIN books b ON b.publisher_id = fs.publisher_id "
-                "AND LEFT(LOWER(b.series_title), 190) = fs.normalized_series "
+                "AND b.series_key = fs.normalized_series AND b.media_type = fs.media_type "
                 "JOIN publishers p ON p.id = b.publisher_id "
                 "WHERE np.email_enabled = TRUE "
                 "AND np.notify_followed_series = TRUE AND u.is_active = TRUE "
+                "AND b.first_seen_at >= fs.created_at "
+                "AND (b.release_status = 'scheduled' OR b.release_date >= %s) "
+                "AND NOT EXISTS(SELECT 1 FROM collection_items c WHERE c.book_id=b.id AND c.user_id=u.id) "
                 "AND b.first_seen_at >= %s ORDER BY u.id, b.first_seen_at, b.id",
-                (since,),
+                (today - timedelta(days=30), since),
             )
             events.extend(followed_series_event(row) for row in cursor.fetchall())
     return _unique_events(events)

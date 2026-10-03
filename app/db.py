@@ -214,6 +214,7 @@ def ensure_schema() -> None:
                 "VARCHAR(20) NOT NULL DEFAULT 'paper'",
             )
             _ensure_column(cursor, "wishlist_items", "purchased_at", "DATE NULL")
+            _ensure_column(cursor, "followed_series", "follow_scope", "VARCHAR(20) NOT NULL DEFAULT 'future'")
             from .collection import migrate_collection
             migrate_collection(cursor, cloud=True)
             _ensure_column(cursor, "crawl_jobs", "skipped_count", "INT UNSIGNED NOT NULL DEFAULT 0")

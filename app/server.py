@@ -416,6 +416,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("series_title", "")),
                     str(payload.get("media_type", "unknown")),
                     bool(payload.get("following", True)),
+                    str(payload.get("scope", "future")),
                 )
                 self._json({"ok": True})
             elif parsed.path == "/api/recommendations/dismiss":
@@ -467,6 +468,7 @@ class Handler(BaseHTTPRequestHandler):
                     int(payload["paid_price"]) if str(payload.get("paid_price", "")).isdigit() else None,
                     str(payload.get("owned_format", "paper")),
                     str(payload.get("purchased_at", "")) or None,
+                    str(payload.get("follow_scope", "future")),
                 )
                 self._json({"ok": True})
             else:
