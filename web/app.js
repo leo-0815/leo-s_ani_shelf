@@ -8,7 +8,7 @@ const state = {
   recommendationSeries: [],
   publishers: [],
   selectedPublishers: null,
-  generalAudience: false,
+  generalAudience: true,
   currentBook: null,
   currentSeries: null,
   pendingSeriesFollow: null,

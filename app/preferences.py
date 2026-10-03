@@ -38,9 +38,51 @@ def publisher_visible(code: str) -> bool:
 def get_preferences(user_id: int) -> dict[str, bool]:
     with transaction() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT general_audience FROM user_preferences WHERE user_id = %s", (user_id,))
+            cursor.execute(
+                "SELECT u.role, p.general_audience FROM users u "
+                "LEFT JOIN user_preferences p ON p.user_id = u.id WHERE u.id = %s", (user_id,)
+            )
             row = cursor.fetchone()
-    return {"general_audience": bool(row and row["general_audience"])}
+    default = not (row and row.get("role") == "admin")
+    return {"general_audience": default if row is None or row.get("general_audience") is None else bool(row["general_audience"])}
+
+
+def migrate_general_audience_default(cursor: Any, *, cloud: bool) -> bool:
+    """One-time reset requested by the owner; later opt-outs remain untouched."""
+    cursor.execute(
+        "SELECT COLUMN_DEFAULT AS column_default FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = 'user_preferences' "
+        "AND column_name = 'general_audience'"
+    )
+    row = cursor.fetchone()
+    if row and str(row["column_default"]).lower() not in {"1", "true"}:
+        cursor.execute("ALTER TABLE user_preferences ALTER COLUMN general_audience SET DEFAULT 1")
+    # Unique marker serializes concurrent startup/migration workers. It is inserted
+    # after all DDL, in the same transaction as the preference update.
+    cursor.execute(
+        "INSERT IGNORE INTO app_migrations (migration_key) VALUES (%s)",
+        ("general_audience_default_v1",),
+    )
+    if not cursor.rowcount:
+        return False
+    if cloud:
+        cursor.execute(
+            "UPDATE user_preferences p JOIN users u ON u.id = p.user_id "
+            "SET p.general_audience = TRUE WHERE u.role = 'user'"
+        )
+        cursor.execute(
+            "INSERT INTO user_preferences (user_id, general_audience) "
+            "SELECT id, TRUE FROM users WHERE role = 'user' "
+            "ON DUPLICATE KEY UPDATE general_audience = TRUE"
+        )
+    else:
+        cursor.execute("UPDATE user_preferences SET general_audience = TRUE")
+        cursor.execute(
+            "INSERT INTO user_preferences (user_id, general_audience) VALUES (0, TRUE) "
+            "ON DUPLICATE KEY UPDATE general_audience = TRUE"
+        )
+    print("一般向預設已套用至所有一般帳號；管理員設定保持不變")
+    return True
 
 
 def set_preferences(user_id: int, payload: dict[str, Any]) -> dict[str, bool]:

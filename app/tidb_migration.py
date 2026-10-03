@@ -38,6 +38,7 @@ TABLE_ORDER = (
     "notification_deliveries",
     "notification_preferences",
     "user_preferences",
+    "app_migrations",
 )
 
 

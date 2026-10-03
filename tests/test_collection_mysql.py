@@ -95,7 +95,23 @@ class CollectionMySQLTests(unittest.TestCase):
                     self.assertFalse(get_preferences(1)["general_audience"])
                     set_preferences(1, {"general_audience": True})
                     self.assertTrue(get_preferences(1)["general_audience"])
-                    self.assertFalse(get_preferences(2)["general_audience"])
+                    self.assertTrue(get_preferences(2)["general_audience"])
+                    from app.preferences import migrate_general_audience_default
+                    with connection.cursor() as cursor:
+                        cursor.execute("CREATE TEMPORARY TABLE _smoke_app_migrations LIKE app_migrations")
+                        cursor.execute("ALTER TABLE _smoke_app_migrations RENAME TO app_migrations")
+                        set_preferences(1, {"general_audience": False})
+                        set_preferences(2, {"general_audience": False})
+                        cursor.execute("INSERT INTO users VALUES(3,'admin2@example.test','admin2','admin',TRUE)")
+                        set_preferences(3, {"general_audience": True})
+                        self.assertTrue(migrate_general_audience_default(cursor, cloud=True))
+                        self.assertFalse(get_preferences(1)["general_audience"])
+                        self.assertTrue(get_preferences(3)["general_audience"])
+                        self.assertTrue(get_preferences(2)["general_audience"])
+                        set_preferences(2, {"general_audience": False})
+                        self.assertFalse(migrate_general_audience_default(cursor, cloud=True))
+                        self.assertFalse(get_preferences(1)["general_audience"])
+                        self.assertFalse(get_preferences(2)["general_audience"])
                 upsert_book(BookRecord(publisher_code="chingwin",source_key="hidden",title="青文測試小說",
                                        series_title="青文測試",media_type="novel",author="測試作者",
                                        release_date=date.today()+timedelta(days=7),release_precision="day",
