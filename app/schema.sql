@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS followed_series (
     publisher_id BIGINT UNSIGNED NOT NULL,
     series_title VARCHAR(500) NOT NULL,
     normalized_series VARCHAR(190) NOT NULL,
+    follow_scope VARCHAR(20) NOT NULL DEFAULT 'future',
     media_type VARCHAR(40) NOT NULL DEFAULT 'unknown',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, publisher_id, normalized_series, media_type),

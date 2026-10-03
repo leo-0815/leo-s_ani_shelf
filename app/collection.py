@@ -56,6 +56,10 @@ def set_owned(user_id: int, book_id: int, payload: dict[str, Any]) -> None:
     with transaction() as connection:
         with connection.cursor() as cursor:
             save_owned(cursor, user_id, book_id, payload)
+            if "follow_series" in payload:
+                from .series_follow import follow_for_book
+                follow_for_book(cursor,user_id,book_id,bool(payload["follow_series"]),
+                                str(payload.get("follow_scope", "future")),cloud=True)
 
 
 def decorate_owned(items: list[dict[str, Any]], user_id: int) -> list[dict[str, Any]]:

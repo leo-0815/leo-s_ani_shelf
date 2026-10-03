@@ -222,7 +222,7 @@ function renderBooks() {
         ${cardAction}
       </div>
       <div class="book-meta">
-        <div class="chip-row">${edition}${priority}</div>
+        <div class="chip-row">${edition}${priority}${book.is_owned ? '<span class="collection-chip">已收藏</span>' : ""}</div>
         <h3>${escapeHtml(book.title)}</h3>
         <p>${escapeHtml(book.author || "作者未提供")} · ${escapeHtml(book.publisher_name)}</p>
         <div class="release-row"><time>${releaseLabel(book)}</time><span>${escapeHtml(typeLabels[book.media_type] || "未分類")}</span></div>
@@ -301,7 +301,8 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
             <label>優先度<select id="wishlistPriority">${priorityLabels.map((label, index) => `<option value="${index}" ${Number(book.wishlist_priority || 0) === index ? "selected" : ""}>${label}</option>`).join("")}</select></label>
             <label>收藏格式<select id="wishlistFormat">${Object.entries(formatLabels).map(([key, value]) => `<option value="${key}" ${book.wishlist_format === key ? "selected" : ""}>${value}</option>`).join("")}</select></label>
             <label id="purchasedAtLabel">購入日期<input id="wishlistPurchasedAt" type="date" value="${escapeHtml(book.wishlist_purchased_at || "")}"></label>
-            <label class="check-label"><input id="followSeries" type="checkbox" ${book.follow_series || book.series_following ? "checked" : ""}> 自動追蹤此系列新書</label>
+            <label class="check-label"><input id="followSeries" type="checkbox" ${book.series_following ? "checked" : ""}> 自動追蹤此系列新書</label>
+            <label class="check-label"><input id="followAllSeries" type="checkbox" ${book.series_follow_scope === "all" ? "checked" : ""}> 追蹤此系列所有書籍（含既有卷數）</label>
             <label>預購／購入店家<input id="wishlistStore" value="${escapeHtml(book.wishlist_store || "")}" placeholder="例如博客來、安利美特"></label>
             <label>訂單編號<input id="wishlistOrder" value="${escapeHtml(book.wishlist_order_number || "")}" placeholder="僅儲存在本機"></label>
             <label>實付價格<input id="wishlistPaidPrice" type="number" min="0" value="${escapeHtml(book.wishlist_paid_price || "")}" placeholder="NT$"></label>
@@ -337,6 +338,13 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
       $("#wishlistPriority").closest("label").classList.add("hidden");
       $("#removeCollection")?.addEventListener("click", removeCollection);
     }
+    const syncFollowScope = () => {
+      if ($("#followAllSeries").checked) $("#followSeries").checked = true;
+      $("#followSeries").disabled = $("#followAllSeries").checked || !book.series_title;
+      $("#followAllSeries").disabled = !book.series_title;
+    };
+    $("#followAllSeries").addEventListener("change", syncFollowScope);
+    syncFollowScope();
     $("#wishlistForm").addEventListener("submit", saveWishlist);
     const syncPurchasedDate = () => {
       const purchased = $("#wishlistState").value === "purchased";
@@ -383,6 +391,7 @@ async function saveWishlist(event) {
     state: $("#wishlistState").value,
     notes: $("#wishlistNotes").value,
     follow_series: $("#followSeries").checked,
+    follow_scope: $("#followAllSeries").checked ? "all" : "future",
     priority: Number($("#wishlistPriority").value),
     store_name: $("#wishlistStore").value,
     order_number: $("#wishlistOrder").value,
@@ -393,9 +402,6 @@ async function saveWishlist(event) {
   try {
     const endpoint = state.detailMode === "collection" ? `/api/collection/book/${state.currentBook.id}` : `/api/wishlist/${state.currentBook.id}`;
     await api(endpoint, {method: "POST", body: JSON.stringify(payload)});
-    if (state.detailMode === "collection" && book.series_title) {
-      await api("/api/series/follow", {method:"POST", body:JSON.stringify({publisher:book.publisher_code, series_title:book.series_title, media_type:book.media_type, following:payload.follow_series})});
-    }
     $("#detailDialog").close();
     toast(state.detailMode === "collection" ? "藏書已儲存" : (payload.state === "purchased" ? "已加入藏書，關注仍保留" : "訂選清單已儲存"));
     await Promise.all([loadBooks(), loadStats()]);
@@ -503,13 +509,35 @@ async function openSeriesByValues(publisher, title, mediaType) {
       <p class="eyebrow">${escapeHtml(series.publisher_name)} · ${escapeHtml(typeLabels[series.media_type] || "未分類")}</p>
       <h2>${escapeHtml(series.series_title)}</h2>
       <p class="detail-sub">同一媒體類型的集數、一般版與限定版集中顯示。</p>
+      <div class="form-actions">
+        <select id="seriesFollowScope" aria-label="系列追蹤範圍">
+          <option value="future" ${series.items[0]?.series_follow_scope !== "all" ? "selected" : ""}>只追蹤新書</option>
+          <option value="all" ${series.items[0]?.series_follow_scope === "all" ? "selected" : ""}>所有書籍（含既有卷數）</option>
+        </select>
+        <button class="primary" id="saveSeriesFollow">儲存系列追蹤</button>
+        <button class="secondary" id="stopSeriesFollow">停止追蹤</button>
+      </div>
       ${series.missing_volumes?.length ? `<div class="missing-volumes">可能缺少集數：${series.missing_volumes.map(String).join("、")}</div>` : ""}
       <div class="series-book-list">${series.items.map(book => `<button class="series-book-row" data-series-book="${book.id}">
         <span class="volume-box">${escapeHtml(book.volume_label || "—")}</span>
         <span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(editionLabels[book.edition_type] || book.edition_type)} · ${releaseLabel(book)}</small></span>
-        <span class="${book.wishlist_state ? "owned-state active" : "owned-state"}">${book.wishlist_state ? escapeHtml(wishlistLabels[book.wishlist_state]) : "未訂選"}</span>
+        <span class="${book.wishlist_state ? "owned-state active" : "owned-state"}">${book.is_owned ? "已收藏" : book.wishlist_state ? escapeHtml(wishlistLabels[book.wishlist_state]) : "未訂選"}</span>
       </button>`).join("")}</div>
     </div>`;
+    const saveSeriesTracking = async following => {
+      try {
+        await api("/api/series/follow", {method:"POST",body:JSON.stringify({
+          publisher:series.publisher_code,series_title:series.series_title,media_type:series.media_type,
+          following,scope:$("#seriesFollowScope").value,
+        })});
+        toast(following ? "系列追蹤已儲存（不覆蓋既有訂選，已收藏書籍略過）" : "已停止系列追蹤，既有訂選與藏書保留");
+        $("#seriesDialog").close();
+        await Promise.all([loadBooks(),loadStats()]);
+        if (state.view === "series") await loadSeries();
+      } catch(error) {toast(error.message,true);}
+    };
+    $("#saveSeriesFollow").addEventListener("click", () => saveSeriesTracking(true));
+    $("#stopSeriesFollow").addEventListener("click", () => saveSeriesTracking(false));
     $$("[data-series-book]").forEach(button => button.addEventListener("click", () => {
       $("#seriesDialog").close();
       openDetail(Number(button.dataset.seriesBook));

@@ -38,13 +38,14 @@ def restore_export(path: Path, user_id: int | None = None) -> dict[str, int]:
                     _book_id(record.publisher_code, record.source_key),
                     str(item["wishlist_state"]),
                     str(item.get("wishlist_notes") or ""),
-                    bool(item.get("follow_series")),
+                    True if item.get("series_following") or item.get("follow_series") else None,
                     int(item.get("wishlist_priority") or 0),
                     str(item.get("wishlist_store") or ""),
                     str(item.get("wishlist_order_number") or ""),
                     int(item["wishlist_paid_price"]) if item.get("wishlist_paid_price") is not None else None,
                     str(item.get("wishlist_format") or "paper"),
                     str(item.get("wishlist_purchased_at") or "") or None,
+                    str(item.get("series_follow_scope") or "future"),
                 )
                 totals["wishlist"] += 1
         except Exception:

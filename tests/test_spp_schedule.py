@@ -16,3 +16,37 @@ class OfficialScheduleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             schedule_rows("<html>Sign in</html>", 2026)
 
+    def test_recent_catalog_limit_is_numeric_not_lexicographic(self):
+        from unittest.mock import patch
+        from app.sources.spp import SppSource
+        source=SppSource()
+        with patch.object(source,"_sitemap_urls",return_value=[
+            "https://www.spp.com.tw/SalePage/Index/9",
+            "https://www.spp.com.tw/SalePage/Index/100",
+            "https://www.spp.com.tw/SalePage/Index/20",
+        ]):
+            self.assertTrue(source._recent_catalog_urls(1)[0].endswith("/100"))
+
+    def test_schedule_dates_win_while_product_metadata_is_enriched(self):
+        from unittest.mock import patch
+        from datetime import date
+        from app.models import BookRecord
+        from app.sources.spp import SppSource
+        source=SppSource()
+        scheduled=BookRecord("spp","A1","測試小說","novel","https://docs.google.com/spreadsheets/test",release_date=date(2026,10,5),release_precision="day")
+        detail=BookRecord("spp","A1","測試小說","novel","https://www.spp.com.tw/SalePage/Index/1",release_date=date(2026,9,1),cover_url="https://example.test/cover.jpg",isbn="9781234567890")
+        with patch.object(source,"_recent_catalog_urls",return_value=["url"]),patch.object(source,"_fetch_catalog_batch",return_value=[(detail,detail.release_date)]):
+            result=source._enrich_schedule([scheduled])
+        self.assertEqual(result[0].release_date,date(2026,10,5))
+        self.assertEqual(result[0].cover_url,detail.cover_url)
+
+    def test_product_rating_is_parsed(self):
+        import json
+        from datetime import date
+        from app.sources.spp import SppSource
+        data={"Title":"测试漫畫(1)","Id":1,"CategoryLevelName":{"Level1_ShopCategory_Name":"漫畫"},
+              "SellingStartDateTime":date.today().isoformat(),"ShortDescription":"書 號：A1 等 級：限制級"}
+        markup='SalePageIndexViewModel"] = '+json.dumps(data)
+        record,_date=SppSource()._parse_detail("https://example.test/1",markup)
+        self.assertEqual(record.prepared()["content_rating"],"restricted_18")
+
