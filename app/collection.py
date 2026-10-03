@@ -156,3 +156,53 @@ def collection_stats(user_id: int) -> dict[str, int]:
                 "COALESCE(SUM(c.paid_price),0) AS purchased_spend FROM collection_items c "
                 "LEFT JOIN books b ON b.id=c.book_id WHERE c.user_id=%s", (user_id,))
             return {key:int(value or 0) for key,value in cursor.fetchone().items()}
+
+
+def custom_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    title = str(payload.get("title") or "").strip()
+    if not title or len(title) > 500:
+        raise ValueError("請輸入書名（最多 500 字）")
+    media = str(payload.get("media_type") or "unknown")
+    if media not in {"manga", "novel", "unknown"}:
+        raise ValueError("書籍類型只能是漫畫、輕小說或未分類")
+    release = payload.get("release_date")
+    return dict(
+        title=title, author=str(payload.get("author") or "")[:500] or None,
+        publisher_name=str(payload.get("publisher_name") or "")[:200] or None,
+        media_type=media, isbn=str(payload.get("isbn") or "")[:30] or None,
+        edition_type=str(payload.get("edition_type") or "")[:100] or None,
+        release_date=date.fromisoformat(str(release)) if release else None,
+        **ownership_payload(payload),
+    )
+
+
+def save_custom(user_id: int, payload: dict[str, Any], collection_id: int | None = None) -> int:
+    data = custom_payload(payload)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            if collection_id is None:
+                columns = ",".join(data)
+                marks = ",".join(["%s"] * len(data))
+                cursor.execute(f"INSERT INTO collection_items (user_id,{columns}) VALUES (%s,{marks})",
+                               [user_id, *data.values()])
+                return int(cursor.lastrowid)
+            cursor.execute("SELECT id FROM collection_items WHERE id=%s AND user_id=%s AND book_id IS NULL",
+                           (collection_id, user_id))
+            if not cursor.fetchone():
+                raise KeyError("找不到你的自建藏書")
+            columns = ",".join(key + "=%s" for key in data)
+            cursor.execute(f"UPDATE collection_items SET {columns} WHERE id=%s AND user_id=%s AND book_id IS NULL",
+                           [*data.values(), collection_id, user_id])
+            return collection_id
+
+
+def get_custom(user_id: int, collection_id: int) -> dict[str, Any]:
+    from .repository import serialize_row
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM collection_items WHERE id=%s AND user_id=%s AND book_id IS NULL",
+                           (collection_id, user_id))
+            row = cursor.fetchone()
+            if not row:
+                raise KeyError("找不到你的自建藏書")
+            return serialize_row(row)

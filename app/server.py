@@ -27,7 +27,7 @@ from .auth import (
     oauth_state_cookie,
     session_cookie,
 )
-from .collection import set_owned, remove_owned
+from .collection import set_owned, remove_owned, save_custom, get_custom
 from .config import ROOT, get_settings
 from .catalog_sync import PROTOCOL_VERSION, ingest_catalog_books
 from .models import SYNC_HASH_VERSION
@@ -195,6 +195,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/books":
             query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
             self._json(list_books(query, user_id, int(query.get("limit", "100")), int(query.get("offset", "0"))))
+        elif match := re.fullmatch(r"/api/collection/custom/(\d+)", parsed.path):
+            self._json(get_custom(user_id, int(match.group(1))))
         elif match := re.fullmatch(r"/api/books/(\d+)", parsed.path):
             book = get_book(int(match.group(1)), user_id)
             self._json(book or {"error": "Book not found"}, HTTPStatus.OK if book else HTTPStatus.NOT_FOUND)
@@ -445,6 +447,10 @@ class Handler(BaseHTTPRequestHandler):
                     public_url=settings.public_url,
                 )
                 self._json({**result, "message": "Discord 測試訊息已送出"})
+            elif parsed.path == "/api/collection/custom":
+                self._json({"ok": True, "collection_id": save_custom(user_id, payload)})
+            elif match := re.fullmatch(r"/api/collection/custom/(\d+)", parsed.path):
+                self._json({"ok": True, "collection_id": save_custom(user_id, payload, int(match.group(1)))})
             elif match := re.fullmatch(r"/api/collection/book/(\d+)", parsed.path):
                 set_owned(user_id, int(match.group(1)), payload)
                 self._json({"ok": True})

@@ -213,11 +213,11 @@ function renderBooks() {
     const cover = safeUrl(book.cover_url);
     const image = cover ? `<img src="${cover}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
     const selected = Boolean(book.wishlist_state);
-    const edition = book.edition_type !== "standard" ? `<span class="edition-chip">${escapeHtml(editionLabels[book.edition_type] || book.edition_type)}</span>` : "";
+    const edition = book.edition_type && book.edition_type !== "standard" ? `<span class="edition-chip">${escapeHtml(editionLabels[book.edition_type] || book.edition_type)}</span>` : "";
     const priority = selected && Number(book.wishlist_priority) > 0 ? `<span class="priority-chip p${book.wishlist_priority}">${priorityLabels[book.wishlist_priority]}</span>` : "";
-    const cardAction = `<button class="heart ${selected ? "selected" : ""}" data-wishlist="${book.id}" aria-label="${selected ? "移出" : "加入"}訂選清單">${selected ? "♥" : "♡"}</button>`;
+    const cardAction = book.is_custom ? '<span class="collection-chip">自建藏書</span>' : `<button class="heart ${selected ? "selected" : ""}" data-wishlist="${book.id}" aria-label="${selected ? "移出" : "加入"}訂選清單">${selected ? "♥" : "♡"}</button>`;
     return `<article class="book-card" data-id="${book.id}" tabindex="0">
-      <div class="cover">${image}
+      <div class="cover">${image || titleCover(book)}
         <span class="badge ${escapeHtml(book.release_status)}">${escapeHtml(statusLabels[book.release_status] || "未知")}</span>
         ${cardAction}
       </div>
@@ -256,6 +256,7 @@ async function quickWishlist(bookId) {
 }
 
 async function openDetail(bookId, mode = state.view === "collection" ? "collection" : "wishlist") {
+  if (bookId < 0) return openCustomCollection(-bookId);
   try {
     const [book, relatedData] = await Promise.all([
       api(`/api/books/${bookId}`),
@@ -277,7 +278,7 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
     const source = safeUrl(book.source_url);
     $("#detailContent").innerHTML = `<div class="detail">
       <section class="detail-hero">
-        <div class="detail-cover">${cover ? `<img src="${cover}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</div>
+        <div class="detail-cover">${cover ? `<img src="${cover}" alt="" loading="lazy" referrerpolicy="no-referrer">` : titleCover(book)}</div>
         <div class="detail-info">
         <p class="eyebrow">${escapeHtml(book.publisher_name)} · ${escapeHtml(typeLabels[book.media_type] || "未分類")}</p>
         <h2>${escapeHtml(book.title)}</h2>
@@ -942,6 +943,118 @@ $("#logoutButton").addEventListener("click", async () => {
     location.assign("/");
   }
 });
+
+function titleCover(book) {
+  return '<span class="title-cover">' + escapeHtml([...String(book.title || "書")].slice(0, 6).join("")) + '</span>';
+}
+
+function showCollectionSearch() {
+  state.collectionSearchOffset = 0;
+  state.collectionSearchQuery = "";
+  state.collectionSearchType = "";
+  $("#collectionAddContent").innerHTML = '<p class="eyebrow">ADD TO COLLECTION</p><h2>新增藏書</h2>' +
+    '<p class="muted">先搜尋系統書目；找不到時可以手動建立，只會保存在你的藏書。</p>' +
+    '<form id="collectionSearchForm" class="collection-search-form"><input id="collectionSearchInput" placeholder="部分書名、作者或 ISBN" aria-label="搜尋藏書">' +
+    '<select id="collectionSearchType" aria-label="書籍類型"><option value="">所有類型</option><option value="novel">輕小說</option><option value="manga">漫畫</option></select><button class="primary">搜尋</button></form>' +
+    '<div id="collectionSearchResults" class="collection-search-results"></div><div id="collectionSearchPagination" class="form-actions"></div>' +
+    '<button class="secondary" id="createCustomBook" type="button">找不到書？手動新增</button>';
+  $("#collectionSearchForm").addEventListener("submit", event => {
+    event.preventDefault();
+    state.collectionSearchOffset = 0;
+    state.collectionSearchQuery = $("#collectionSearchInput").value.trim();
+    state.collectionSearchType = $("#collectionSearchType").value;
+    searchCollectionCatalog();
+  });
+  $("#createCustomBook").addEventListener("click", () => showCustomCollectionForm());
+  if (!$("#collectionAddDialog").open) $("#collectionAddDialog").showModal();
+  $("#collectionSearchInput").focus();
+}
+
+async function searchCollectionCatalog() {
+  const requestId = (state.collectionSearchRequest || 0) + 1;
+  state.collectionSearchRequest = requestId;
+  $("#collectionSearchResults").textContent = "搜尋中…";
+  try {
+    const params = new URLSearchParams({q:state.collectionSearchQuery, media_type:state.collectionSearchType,
+      limit:"20", offset:String(state.collectionSearchOffset)});
+    const data = await api("/api/books?" + params);
+    if (requestId !== state.collectionSearchRequest || !$("#collectionSearchResults")) return;
+    $("#collectionSearchResults").innerHTML = data.items.map(book => {
+      const cover = safeUrl(book.cover_url);
+      return '<button class="collection-search-result" type="button" data-collect-result="' + book.id + '">' +
+        '<span class="collection-search-cover">' + (cover ? '<img src="' + cover + '" alt="" referrerpolicy="no-referrer" loading="lazy">' : titleCover(book)) + '</span>' +
+        '<span><strong>' + escapeHtml(book.title) + '</strong><small>' + escapeHtml(book.author || "作者未提供") + ' · ' + escapeHtml(book.publisher_name) +
+        '</small><small>' + (book.is_owned ? "已在藏書 · 編輯" : "加入我的藏書") + '</small></span></button>';
+    }).join("") || '<p>查無資料，可以手動新增藏書。</p>';
+    $("#collectionSearchPagination").innerHTML = '<small>共 ' + data.total.toLocaleString() + ' 本</small>' +
+      (data.offset > 0 ? '<button class="secondary" id="collectionSearchPrev" type="button">上一頁</button>' : "") +
+      (data.offset + data.items.length < data.total ? '<button class="secondary" id="collectionSearchNext" type="button">下一頁</button>' : "");
+    $$("[data-collect-result]").forEach(button => button.addEventListener("click", () => {
+      $("#collectionAddDialog").close();
+      openDetail(Number(button.dataset.collectResult), "collection");
+    }));
+    $("#collectionSearchPrev")?.addEventListener("click", () => {state.collectionSearchOffset -= 20; searchCollectionCatalog();});
+    $("#collectionSearchNext")?.addEventListener("click", () => {state.collectionSearchOffset += 20; searchCollectionCatalog();});
+  } catch (error) {
+    if ($("#collectionSearchResults")) $("#collectionSearchResults").textContent = error.message;
+  }
+}
+
+async function openCustomCollection(collectionId) {
+  try {
+    const book = await api("/api/collection/custom/" + collectionId);
+    showCustomCollectionForm(book);
+  } catch (error) {toast(error.message, true);}
+}
+
+function showCustomCollectionForm(book = {}) {
+  state.collectionSearchRequest = (state.collectionSearchRequest || 0) + 1;
+  const input = (name, label, type = "text", required = false) => '<label>' + label +
+    '<input name="' + name + '" type="' + type + '" value="' + escapeHtml(book[name] ?? "") +
+    '" ' + (required ? 'required maxlength="500"' : "") + (type === "number" ? ' min="0"' : "") + '></label>';
+  $("#collectionAddContent").innerHTML = '<p class="eyebrow">PRIVATE COLLECTION</p><h2>' + (book.id ? "編輯自建藏書" : "手動新增藏書") + '</h2>' +
+    '<p class="muted">只有書名必填。這本書不會進入公開書目或出版社同步資料。</p>' +
+    '<form id="customCollectionForm" class="wishlist-form"><div class="form-grid">' +
+    input("title", "書名 *", "text", true) + input("author", "作者") + input("publisher_name", "出版社") +
+    '<label>書籍類型<select name="media_type">' + ["unknown", "novel", "manga"].map(value => '<option value="' + value + '" ' + (book.media_type === value ? "selected" : "") + '>' + typeLabels[value] + '</option>').join("") + '</select></label>' +
+    input("isbn", "ISBN") + input("edition_type", "版本（例如特裝版）") + input("release_date", "上市日期", "date") +
+    '<label>收藏格式<select name="owned_format">' + Object.entries(formatLabels).map(([value,label]) => '<option value="' + value + '" ' + (book.owned_format === value ? "selected" : "") + '>' + label + '</option>').join("") + '</select></label>' +
+    input("purchased_at", "購入日期", "date") + input("store_name", "購入店家") + input("order_number", "訂單編號") + input("paid_price", "實付價格", "number") +
+    '</div><label>備註<textarea name="notes">' + escapeHtml(book.notes || "") + '</textarea></label>' +
+    '<div class="form-actions"><button class="primary" type="submit">' + (book.id ? "儲存藏書" : "加入我的藏書") + '</button>' +
+    (book.id ? '<button class="danger" id="removeCustomCollection" type="button">移除藏書</button>' : '<button class="secondary" id="backToCollectionSearch" type="button">返回搜尋</button>') +
+    '</div></form>';
+  $("#customCollectionForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('[type="submit"]');
+    button.disabled = true;
+    try {
+      const payload = Object.fromEntries(new FormData(event.currentTarget));
+      await api("/api/collection/custom" + (book.id ? "/" + book.id : ""), {method:"POST",body:JSON.stringify(payload)});
+      $("#collectionAddDialog").close();
+      toast("藏書已儲存");
+      state.offset = 0;
+      await Promise.all([loadBooks(), loadStats()]);
+    } catch (error) {toast(error.message, true);}
+    finally {button.disabled = false;}
+  });
+  $("#backToCollectionSearch")?.addEventListener("click", showCollectionSearch);
+  $("#removeCustomCollection")?.addEventListener("click", async () => {
+    if (!confirm("確定移除這本自建藏書？")) return;
+    try {
+      await api("/api/collection/" + book.id, {method:"DELETE"});
+      $("#collectionAddDialog").close();
+      await Promise.all([loadBooks(), loadStats()]);
+      toast("已移除藏書");
+    } catch (error) {toast(error.message, true);}
+  });
+  if (!$("#collectionAddDialog").open) $("#collectionAddDialog").showModal();
+}
+
+$("#addCollectionBook").addEventListener("click", showCollectionSearch);
+$("#collectionAddClose").addEventListener("click", () => $("#collectionAddDialog").close());
+$("#collectionAddDialog").addEventListener("click", event => {if (event.target === event.currentTarget) event.currentTarget.close();});
+
 $("#dialogClose").addEventListener("click", () => $("#detailDialog").close());
 $("#detailDialog").addEventListener("click", event => {
   if (event.target === event.currentTarget) event.currentTarget.close();

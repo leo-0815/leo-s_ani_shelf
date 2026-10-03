@@ -76,3 +76,44 @@ class CollectionTests(unittest.TestCase):
         for call in cursor.execute.call_args_list:
             self.assertIn("c.user_id = %s", call.args[0])
             self.assertEqual(call.args[1][0], 42)
+
+    def test_manual_book_only_requires_title(self):
+        from app.collection import custom_payload
+        data = custom_payload({"title": "我的書"})
+        self.assertEqual(data["title"], "我的書")
+        self.assertIsNone(data["release_date"])
+        self.assertIsNone(data["edition_type"])
+        for payload in ({"title": " "}, {"title": "a" * 501}, {"title": "書", "media_type": "bad"}):
+            with self.assertRaises(ValueError):
+                custom_payload(payload)
+
+    @patch("app.collection.transaction")
+    def test_custom_save_does_not_touch_public_catalog(self, transaction):
+        from app.collection import save_custom
+        cursor = transaction.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.lastrowid = 9
+        self.assertEqual(save_custom(42, {"title": "私人書"}), 9)
+        sql, values = cursor.execute.call_args.args
+        self.assertIn("INSERT INTO collection_items", sql)
+        self.assertEqual(values[0], 42)
+        self.assertNotIn("INSERT INTO books", sql)
+
+    @patch("app.collection.transaction")
+    def test_cannot_edit_another_users_custom_book(self, transaction):
+        from app.collection import save_custom
+        cursor = transaction.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = None
+        with self.assertRaises(KeyError):
+            save_custom(42, {"title": "私人書"}, 8)
+        sql, values = cursor.execute.call_args.args
+        self.assertIn("user_id=%s AND book_id IS NULL", sql)
+        self.assertEqual(values, (8, 42))
+
+    @patch("app.collection.transaction")
+    def test_cannot_read_another_users_custom_book(self, transaction):
+        from app.collection import get_custom
+        cursor = transaction.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = None
+        with self.assertRaises(KeyError):
+            get_custom(42, 8)
+        self.assertEqual(cursor.execute.call_args.args[1], (8, 42))
