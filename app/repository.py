@@ -656,7 +656,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "WHERE sw.user_id = %s "
                 "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
                 "AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=sw.user_id) "
-                f"AND {visible_publisher_sql()} AND {visible_book_sql('seed')} "
+                f"AND {visible_publisher_sql(book_alias='c')} AND {visible_book_sql('seed')} "
                 "ORDER BY sw.updated_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -677,7 +677,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "AND c.media_type = seed.media_type) "
                 "AND c.normalized_title <> seed.normalized_title "
                 "AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=sw.user_id) "
-                f"AND {visible_publisher_sql()} AND {visible_book_sql('seed')} "
+                f"AND {visible_publisher_sql(book_alias='c')} AND {visible_book_sql('seed')} "
                 "ORDER BY sw.updated_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -696,7 +696,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "LEFT JOIN wishlist_items cw ON cw.book_id = c.id AND cw.user_id = fs.user_id "
                 "LEFT JOIN recommendation_dismissals rd ON rd.book_id = c.id AND rd.user_id = fs.user_id "
                 "WHERE fs.user_id = %s AND cw.book_id IS NULL AND rd.book_id IS NULL AND NOT EXISTS (SELECT 1 FROM collection_items oc WHERE oc.book_id=c.id AND oc.user_id=fs.user_id) "
-                f"AND {visible_publisher_sql()} "
+                f"AND {visible_publisher_sql(book_alias='c')} "
                 "ORDER BY fs.created_at DESC, "
                 "(c.release_status = 'scheduled') DESC, c.release_date DESC "
                 "LIMIT %s",
@@ -715,12 +715,12 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "(SELECT COUNT(*) FROM books all_books "
                 " WHERE all_books.publisher_id = seed.publisher_id "
                 " AND all_books.series_key = seed.series_key "
-                " AND all_books.media_type = seed.media_type) AS book_count, "
+                f" AND all_books.media_type = seed.media_type AND {visible_book_sql('all_books')}) AS book_count, "
                 "(SELECT COUNT(*) FROM books scheduled_books "
                 " WHERE scheduled_books.publisher_id = seed.publisher_id "
                 " AND scheduled_books.series_key = seed.series_key "
                 " AND scheduled_books.media_type = seed.media_type "
-                " AND scheduled_books.release_status = 'scheduled') AS scheduled_count "
+                f" AND scheduled_books.release_status = 'scheduled' AND {visible_book_sql('scheduled_books')}) AS scheduled_count "
                 "FROM collection_items sw "
                 "JOIN books seed ON seed.id = sw.book_id "
                 "JOIN publishers p ON p.id = seed.publisher_id "
@@ -730,7 +730,7 @@ def list_recommendations(user_id: int, limit: int = 60) -> dict[str, Any]:
                 "WHERE sw.user_id = %s "
                 "AND seed.series_key IS NOT NULL AND seed.series_key <> '' "
                 "AND fs.publisher_id IS NULL "
-                f"AND {visible_publisher_sql()} "
+                f"AND {visible_publisher_sql(book_alias='seed')} "
                 "GROUP BY seed.publisher_id, p.code, p.name, "
                 "seed.series_key, seed.media_type "
                 "ORDER BY MAX(sw.updated_at) DESC LIMIT 20",
@@ -913,7 +913,7 @@ def list_publishers() -> list[dict[str, Any]]:
             cursor.execute(
                 "SELECT p.*, s.cursor_date, s.cursor_value, s.last_mode, "
                 "s.backfill_completed, s.last_success_at AS sync_success_at, "
-                "(SELECT COUNT(*) FROM books b WHERE b.publisher_id = p.id) AS book_count "
+                f"(SELECT COUNT(*) FROM books b WHERE b.publisher_id = p.id AND {visible_book_sql()}) AS book_count "
                 "FROM publishers p LEFT JOIN source_sync_state s ON s.source_code = p.code "
                 "ORDER BY p.enabled DESC, p.name"
             )
@@ -1051,8 +1051,10 @@ def stats(user_id: int) -> dict[str, int]:
             )
             result.update(cursor.fetchone())
             cursor.execute(
-                "SELECT COUNT(*) AS followed_series FROM followed_series fs JOIN publishers p ON p.id=fs.publisher_id "
-                f"WHERE fs.user_id = %s AND {visible_publisher_sql()}",
+                "SELECT COUNT(*) AS followed_series FROM followed_series fs "
+                "WHERE fs.user_id = %s AND EXISTS (SELECT 1 FROM books b "
+                "WHERE b.publisher_id=fs.publisher_id AND b.series_key=fs.normalized_series "
+                f"AND b.media_type=fs.media_type AND {visible_book_sql()})",
                 (user_id,),
             )
             result.update(cursor.fetchone())
@@ -1132,8 +1134,6 @@ def get_series(
     series_title: str,
     media_type: str = "",
 ) -> dict[str, Any] | None:
-    if not publisher_visible(publisher_code):
-        return None
     requested_key = series_key(series_title, publisher_code)
     with transaction() as connection:
         with connection.cursor() as cursor:
@@ -1150,6 +1150,7 @@ def get_series(
                 "FROM books b JOIN publishers p ON p.id = b.publisher_id "
                 "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s "
                 "WHERE p.code = %s AND b.series_key = %s AND (%s = '' OR b.media_type = %s) "
+                f"AND {visible_publisher_sql()} "
                 "ORDER BY (b.release_date IS NULL), b.release_date, b.title",
                 (user_id, user_id, publisher_code, requested_key, media_type, media_type),
             )

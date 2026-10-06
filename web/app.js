@@ -176,7 +176,7 @@ function renderPublisherSummary() {
   const selected = state.selectedPublishers;
   const names = selected === null ? [] : selectablePublishers().filter(item => selected.includes(item.code)).map(item => item.name);
   $("#publisherSummary").textContent = selected === null ? "全部出版社" : !selected.length ? "未選擇出版社" : selected.length === 1 ? (names[0] || selected[0]) : `已選 ${selected.length} 家出版社`;
-  $("#publisherSelectionHint").textContent = selected === null ? (state.generalAudience ? "一般向：暫時隱藏青文；可任選多家" : "顯示全部出版社；可任選多家") : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社已被一般向設定隱藏";
+  $("#publisherSelectionHint").textContent = selected === null ? (state.generalAudience ? "一般向：青文僅顯示已確認普遍級；可任選多家" : "顯示全部出版社；可任選多家") : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社沒有可見書目";
 }
 
 function addPublisherParams(params) {

@@ -75,15 +75,15 @@ class ServerAuthorizationTests(unittest.TestCase):
 
     def test_authenticated_browsing_scopes_do_not_leak_between_accounts(self) -> None:
         from urllib.parse import urlparse
-        from app.preferences import publisher_visible
+        from app.preferences import visible_book_sql
         handler = self.handler()
         seen = []
-        handler._visible_authenticated_get = lambda parsed, user: seen.append(publisher_visible("chingwin"))
+        handler._visible_authenticated_get = lambda parsed, user: seen.append(visible_book_sql() == "1 = 1")
         handler._authenticated_get(urlparse("/api/books"), {"id": 7, "general_audience": True})
         handler._authenticated_get(urlparse("/api/books"), {"id": 8, "general_audience": False})
         handler._authenticated_get(urlparse("/api/export.json"), {"id": 7, "general_audience": True})
         self.assertEqual(seen, [False, True, True])
-        self.assertTrue(publisher_visible("chingwin"))
+        self.assertEqual(visible_book_sql(), "1 = 1")
 
     def handler(self):
         handler = object.__new__(Handler)

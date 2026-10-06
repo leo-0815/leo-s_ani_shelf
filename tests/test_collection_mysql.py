@@ -130,6 +130,29 @@ class CollectionMySQLTests(unittest.TestCase):
                     self.assertIn("items",quality_report())
                     self.assertIn("purchased",stats(1))
                 self.assertTrue(get_book(hidden_book["id"],1)["is_owned"])
+                # PR31: verified general is visible, unknown/weak/conflicting
+                # provenance stays hidden. Restricted is hidden even outside Chingwin.
+                for key,rating,source,confidence in (
+                    ("verified","general","publisher",100),
+                    ("manual","general","manual",100),
+                    ("weak","general","publisher",95),
+                    ("untrusted","general","unknown",100),
+                    ("adult","restricted_18","publisher",100),
+                ):
+                    upsert_book(BookRecord(publisher_code="chingwin",source_key=key,title="青文測試 "+key,
+                        series_title="青文測試",media_type="novel",source_url="https://example.test/"+key,
+                        content_rating=rating,rating_source=source,rating_confidence=confidence))
+                upsert_book(BookRecord(publisher_code="spp",source_key="other-adult",title="其他限制級",media_type="manga",
+                    source_url="https://example.test/other-adult",content_rating="restricted_18",
+                    rating_source="publisher",rating_confidence=100))
+                with visibility_scope(True):
+                    q=list_books({"publishers":"chingwin"},1,1,0)
+                    self.assertEqual(q["total"],2)
+                    self.assertEqual(len(q["items"]),1)
+                    self.assertEqual(list_books({"publishers":"chingwin"},1,1,1)["total"],2)
+                    self.assertEqual(len(get_series(1,"chingwin","青文測試","novel")["items"]),2)
+                    self.assertEqual([p["book_count"] for p in list_publishers() if p["code"]=="chingwin"],[2])
+                    self.assertEqual(stats(1)["total"],visible_total+1)
                 # General-mode recommendation self-joins need real read-only tables.
                 with connection.cursor() as cursor:
                     cursor.execute("ALTER TABLE books RENAME TO _smoke_books")
@@ -137,8 +160,10 @@ class CollectionMySQLTests(unittest.TestCase):
                 try:
                     with visibility_scope(True):
                         result=list_recommendations(1)
-                        self.assertFalse(any(b["publisher_code"]=="chingwin" for b in result["items"]))
-                        self.assertFalse(any(b["publisher_code"]=="chingwin" for b in result["series_prompts"]))
+                        for b in result["items"]:
+                            if b["publisher_code"]=="chingwin":
+                                self.assertEqual(b["content_rating"],"general")
+                                self.assertEqual(b["rating_confidence"],100)
                 finally:
                     with connection.cursor() as cursor:
                         cursor.execute("ALTER TABLE _smoke_books RENAME TO books")
