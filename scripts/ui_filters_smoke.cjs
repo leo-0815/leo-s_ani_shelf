@@ -10,11 +10,14 @@ const assert = require("node:assert/strict");
   const publishers = ["kadokawa","spp","tongli","chingwin","tohan","chonghong"].map((code,i)=>({code,name:["台灣角川","尖端","東立","青文","台灣東販","長鴻"][i],enabled:true,book_count:60}));
   const books = publishers.flatMap((p,i)=>Array.from({length:60},(_,n)=>({id:i*60+n+1,title:p.name+" 測試小說 "+n,
     publisher_code:p.code,publisher_name:p.name,author:"作者",media_type:"novel",release_status:"available",
-    release_date:"2026-10-04",edition_type:"standard",series_title:"系列"+n,wishlist_state:"wanted",is_owned:true})));
+    release_date:"2026-10-04",edition_type:"standard",series_title:"系列"+n,wishlist_state:"wanted",is_owned:true,
+    content_rating:p.code==="chingwin"?(n<15?"general":n<30?"restricted_18":"unknown"):"unknown",
+    rating_source:n<15?"publisher":"unknown",rating_confidence:n<15?100:0})));
   let general = process.env.ANISHELF_UI_DEFAULT_ONLY === "1";
   function filtered(params) {
     const codes = params.get("publishers");
-    return books.filter(b=>(!general || b.publisher_code!=="chingwin") && (!codes || codes.split(",").includes(b.publisher_code)) &&
+    return books.filter(b=>(!general || (b.content_rating!=="restricted_18" && (b.publisher_code!=="chingwin" ||
+      (b.content_rating==="general" && b.rating_source==="publisher" && b.rating_confidence===100)))) && (!codes || codes.split(",").includes(b.publisher_code)) &&
       (!params.get("q") || b.title.includes(params.get("q"))));
   }
   await page.route("**/*", async route => {
@@ -31,8 +34,8 @@ const assert = require("node:assert/strict");
       if(req.method()==="POST") {general=req.postDataJSON().general_audience;assert.equal(typeof general,"boolean");}
       return json({general_audience:general});
     }
-    if(p==="/api/publishers") return json({items:publishers.filter(b=>!general||b.code!=="chingwin")});
-    if(p==="/api/stats") return json({total:general?300:360,scheduled:0,available:300,unknown:0,scheduled_undated:0,wishlist:1,followed_series:1,purchased:1,purchased_paper:1,purchased_digital:0,purchased_series:1,purchased_spend:0});
+    if(p==="/api/publishers") return json({items:publishers.map(b=>({...b,book_count:general&&b.code==="chingwin"?15:60}))});
+    if(p==="/api/stats") return json({total:general?315:360,scheduled:0,available:315,unknown:0,scheduled_undated:0,wishlist:1,followed_series:1,purchased:1,purchased_paper:1,purchased_digital:0,purchased_series:1,purchased_spend:0});
     if(p==="/api/books" || p==="/api/series") {
       requests.push({path:p,params:new URLSearchParams(u.search)});
       const items=filtered(u.searchParams), offset=Number(u.searchParams.get("offset")||0), limit=Number(u.searchParams.get("limit")||100);
@@ -52,7 +55,7 @@ const assert = require("node:assert/strict");
     await page.locator(".book-card").first().waitFor();
     if(process.env.ANISHELF_UI_DEFAULT_ONLY === "1") {
       await page.locator("#publisherSummary").click();
-      assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),0);
+      assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),1);
       await page.locator("#publisherSummary").press("Escape");
       await page.locator('[data-view="preferences"]').click();
       assert.equal(await page.locator("#generalAudience").isChecked(),true);
@@ -62,7 +65,7 @@ const assert = require("node:assert/strict");
       await page.locator("#publisherSummary").click();
       assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),1);
       assert.deepEqual(errors,[]);
-      console.log("Default general-audience UI OK: checked at first load, Chingwin hidden, opt-out restores publisher.");
+      console.log("Default general-audience UI OK: checked at first load, verified Chingwin visible, opt-out keeps publisher.");
       return;
     }
     for(const count of [1,2,3,4,5]) {
@@ -95,10 +98,11 @@ const assert = require("node:assert/strict");
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/publishers")), page.locator('#preferencesForm [type="submit"]').click()]);
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")), page.locator('[data-view="library"]').click()]);
     await page.locator("#publisherSummary").click();
-    assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),0);
+    assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),1);
     await page.locator("#publisherSummary").press("Escape");
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")&&r.url().includes("q=")), page.locator("#searchInput").fill("青文")]);
-    assert.equal(await page.locator(".book-card").count(),0);
+    assert.equal(await page.locator(".book-card").count(),15);
+    assert(filtered(new URLSearchParams("q=青文")).every(b=>b.content_rating==="general"&&b.rating_confidence===100));
     await page.reload();
     await page.locator('[data-view="preferences"]').click();
     await page.locator("#generalAudience").waitFor();

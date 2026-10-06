@@ -43,7 +43,7 @@ class PublisherFilterTests(unittest.TestCase):
     def test_scope_is_request_local_and_reset_even_after_errors(self):
         def observe(enabled):
             with visibility_scope(enabled):
-                return publisher_visible("chingwin")
+                return visible_book_sql() == "1 = 1"
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertEqual(list(pool.map(observe, [True, False]*10)), [False, True]*10)
         try:
@@ -53,7 +53,8 @@ class PublisherFilterTests(unittest.TestCase):
             pass
         self.assertTrue(publisher_visible("chingwin"))
         with visibility_scope(True):
-            self.assertFalse(publisher_visible("chingwin"))
+            self.assertTrue(publisher_visible("chingwin"))
+            self.assertIn("rating_confidence = 100", visible_book_sql())
             self.assertTrue(publisher_visible("spp"))
             self.assertIn("publisher_id IS NULL", visible_book_sql())
 

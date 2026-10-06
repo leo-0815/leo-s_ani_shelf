@@ -19,20 +19,35 @@ def visibility_scope(enabled: bool) -> Iterator[None]:
         _GENERAL_AUDIENCE.reset(token)
 
 
-def visible_publisher_sql(alias: str = "p") -> str:
-    return f"({alias}.code IS NULL OR {alias}.code <> 'chingwin')" if _GENERAL_AUDIENCE.get() else "1 = 1"
+def _trusted_general_sql(prefix: str) -> str:
+    return (f"({prefix}content_rating = 'general' AND "
+            f"{prefix}rating_source IN ('publisher', 'manual') AND "
+            f"{prefix}rating_confidence = 100)")
+
+
+def visible_publisher_sql(alias: str = "p", book_alias: str = "b") -> str:
+    if not _GENERAL_AUDIENCE.get():
+        return "1 = 1"
+    prefix = f"{book_alias}." if book_alias else ""
+    return (f"(COALESCE({prefix}content_rating, 'unknown') <> 'restricted_18' AND "
+            f"({alias}.code IS NULL OR {alias}.code <> 'chingwin' OR "
+            f"{_trusted_general_sql(prefix)}))")
 
 
 def visible_book_sql(alias: str = "b") -> str:
     prefix = f"{alias}." if alias else ""
-    return (
-        f"({prefix}publisher_id IS NULL OR {prefix}publisher_id NOT IN "
-        "(SELECT id FROM publishers WHERE code = 'chingwin'))"
-    ) if _GENERAL_AUDIENCE.get() else "1 = 1"
+    if not _GENERAL_AUDIENCE.get():
+        return "1 = 1"
+    return (f"(COALESCE({prefix}content_rating, 'unknown') <> 'restricted_18' AND "
+            f"({prefix}publisher_id IS NULL OR {prefix}publisher_id NOT IN "
+            "(SELECT id FROM publishers WHERE code = 'chingwin') OR "
+            f"{_trusted_general_sql(prefix)}))")
 
 
 def publisher_visible(code: str) -> bool:
-    return not (_GENERAL_AUDIENCE.get() and code == "chingwin")
+    # Eligibility is per book now, not per publisher. Never use this to
+    # authorize book details; those must apply one of the SQL predicates.
+    return True
 
 
 def get_preferences(user_id: int) -> dict[str, bool]:
