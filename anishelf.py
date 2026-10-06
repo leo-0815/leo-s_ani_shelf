@@ -30,6 +30,10 @@ def main() -> None:
             ],
             check=True,
         )
+    elif command == "ratings":
+        from app.rating_enrichment import main as rating_main
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        rating_main()
     elif command == "setup":
         from app.setup_mysql import main as setup_main
 
