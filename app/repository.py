@@ -194,6 +194,9 @@ def _apply_series_alias_to_data(
 def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     """Keep an administrator's rating while still accepting fresh publisher metadata."""
     result = dict(data)
+    if data.get('content_rating') in {None, 'unknown'} and existing.get('content_rating') not in {None, 'unknown'}:
+        for field in RATING_FIELDS:
+            result[field] = existing.get(field)
     if "docs.google.com/spreadsheets/" in str(data.get("source_url") or ""):
         for field in ("author", "isbn", "cover_url", "list_price", *RATING_FIELDS):
             if result.get(field) in {None, "", "unknown", 0}:
