@@ -341,7 +341,9 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
   try {
     const [book, relatedData] = await Promise.all([
       api(`/api/books/${bookId}`),
-      api(`/api/books/${bookId}/recommendations?limit=8`),
+      // Recommendations are optional: a failed query must not hide the book.
+      api(`/api/books/${bookId}/recommendations?limit=8`)
+        .catch(() => ({items: [], unavailable: true})),
     ]);
     const related = relatedData.items || [];
     state.currentBook = book;
@@ -411,7 +413,9 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
             </div>
           </article>`;
         }).join("")}</div>
-      </section>` : ""}
+      </section>` : (relatedData.unavailable
+        ? '<section class="detail-related"><p role="status">推薦暫時無法載入；書籍資訊仍可正常使用。</p></section>'
+        : "")}
     </div>`;
     if (mode === "collection") {
       $("#wishlistState").value = "purchased";

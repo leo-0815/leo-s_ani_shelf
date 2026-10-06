@@ -13,6 +13,7 @@ const assert = require("node:assert/strict");
     release_date:"2026-10-03",release_precision:"day",release_status:"available",history:[],
     wishlist_state:id===1?"wanted":null,is_owned:id===1,collection_id:id===1?10:null,collection:{owned_format:"paper"}}));
   let custom = null;
+  let recommendationsUnavailable = false;
   await page.route("**/*", async route => {
     const request=route.request(), url=new URL(request.url()), p=url.pathname;
     const json = data => route.fulfill({contentType:"application/json",body:JSON.stringify(data)});
@@ -31,7 +32,13 @@ const assert = require("node:assert/strict");
       if (url.searchParams.get("q")) items=items.filter(b=>b.title.includes(url.searchParams.get("q")));
       return json({items,total:items.length,limit:100,offset:0});
     }
-    if (/\/api\/books\/\d+\/recommendations/.test(p)) return json({items:[]});
+    if (/\/api\/books\/\d+\/recommendations/.test(p)) {
+      if (recommendationsUnavailable) return route.fulfill({
+        status:500,contentType:"application/json",
+        body:JSON.stringify({error:"Simulated recommendation failure"}),
+      });
+      return json({items:[]});
+    }
     if (/\/api\/books\/\d+$/.test(p)) return json(books.find(b=>b.id===Number(p.split("/").pop())));
     if (/\/api\/wishlist\/\d+$/.test(p)) {books.find(b=>b.id===Number(p.split("/").pop())).wishlist_state=request.method()==="DELETE"?null:"wanted";return json({ok:true});}
     if (/\/api\/collection\/book\/\d+/.test(p)) {
@@ -76,10 +83,17 @@ const assert = require("node:assert/strict");
     await page.waitForFunction(()=>document.querySelector('#wishlistForm [type="submit"]')?.textContent==="儲存藏書");
     assert.equal(await page.locator('#wishlistForm [type="submit"]').textContent(),"儲存藏書");
     await page.locator("#dialogClose").click();
+    recommendationsUnavailable = true;
+    await page.locator('[data-id="2"]').click();
+    await page.getByText("推薦暫時無法載入；書籍資訊仍可正常使用。").waitFor();
+    assert.equal(await page.locator("#detailDialog").evaluate(el=>el.open),true);
+    assert.equal(await page.locator("#detailContent h2").textContent(),"測試小說 2");
+    assert.equal(await page.locator('#wishlistForm [type="submit"]').textContent(),"儲存藏書");
+    await page.locator("#dialogClose").click();
     await page.setViewportSize({width:390,height:844});
     await page.locator("#addCollectionBook").click();
     assert.equal(await page.locator("#collectionAddDialog").evaluate(el=>el.getBoundingClientRect().width<=window.innerWidth),true);
     assert.deepEqual(errors,[]);
-    console.log("UI smoke OK: heart cancellation keeps collection, catalog add, all-series checkbox, private book cover, labels, mobile dialog");
+    console.log("UI smoke OK: collection, labels, mobile dialog, recommendation failure keeps book detail usable");
   } finally { await browser.close(); }
 })().catch(error=>{console.error(error);process.exit(1);});

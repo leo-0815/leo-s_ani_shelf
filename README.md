@@ -1,3 +1,9 @@
+## 商品詳情推薦修復
+
+修正一般向模式下商品推薦查詢的 SQL 別名，避免點開商品時出現 `Unknown column 'b.content_rating' in 'where clause'`。同系列與同作者推薦仍套用原本分級規則；若推薦服務暫時失敗，商品資訊與訂選／藏書表單仍可正常開啟，推薦區會顯示暫時無法載入。
+
+回歸測試：`python -m unittest tests.test_detail_recommendation_sql` 會實際執行兩條推薦 SQL，驗證一般向、未限制模式、隱藏種子書及訂選／忽略排除；`node scripts/ui_collection_smoke.cjs` 另驗證推薦 API 回傳 500 時仍可展開商品頁。
+
 ## 一般向預設（PR28）
 
 以下為 PR28 歷史說明；青文整家隱藏策略已由 PR31 改為逐本確認，見頁首分級說明。
