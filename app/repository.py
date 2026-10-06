@@ -836,7 +836,7 @@ def list_book_recommendations(
                     "WHERE c.publisher_id = %s AND c.series_key = %s "
                     "AND c.media_type = %s AND c.id <> %s "
                     "AND w.book_id IS NULL AND rd.book_id IS NULL "
-                    f"AND {visible_publisher_sql()} "
+                    f"AND {visible_publisher_sql(book_alias='c')} "
                     "ORDER BY (c.release_status = 'scheduled') DESC, "
                     "c.release_date DESC LIMIT %s",
                     (
@@ -863,7 +863,7 @@ def list_book_recommendations(
                     "AND NOT (COALESCE(c.series_key, '') = COALESCE(%s, '') "
                     "AND c.media_type = %s) "
                     "AND w.book_id IS NULL AND rd.book_id IS NULL "
-                    f"AND {visible_publisher_sql()} "
+                    f"AND {visible_publisher_sql(book_alias='c')} "
                     "ORDER BY (c.release_status = 'scheduled') DESC, "
                     "c.release_date DESC LIMIT %s",
                     (
