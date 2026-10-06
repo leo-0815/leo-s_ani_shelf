@@ -6,11 +6,13 @@ import json
 import math
 import re
 from datetime import date
+from dataclasses import replace
 from typing import Any, Iterator
 from urllib.parse import urljoin
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
 from .common import fetch_html, one_year_cutoff, parse_page, polite_pause, unique
+from .chingwin_rating import parse_product_rating
 
 
 class ChingWinSource:
@@ -86,6 +88,7 @@ class ChingWinSource:
                     record for record in page_records if record.source_key not in seen_keys
                 ]
                 seen_keys.update(record.source_key for record in records)
+                records = [self._with_product_rating(record) for record in records]
                 completed = page_number >= total_pages
                 checkpoint = (
                     {
@@ -107,6 +110,21 @@ class ChingWinSource:
                     break
                 page_number += 1
                 polite_pause(0.35)
+
+    def _with_product_rating(self, record: BookRecord) -> BookRecord:
+        # A failed detail request remains unknown; never infer general from a title.
+        polite_pause(1.5)
+        try:
+            rating, raw = parse_product_rating(
+                record.source_url, fetch_html(record.source_url, timeout=20, attempts=2),
+                record.source_key,
+            )
+            return replace(record, content_rating=rating, rating_raw=raw,
+                           rating_source='publisher' if rating != 'unknown' else 'unknown',
+                           rating_confidence=100 if rating != 'unknown' else 0)
+        except Exception as exc:
+            self.errors.append(f'青文商品分級 {record.source_key}: {exc}')
+            return record
 
     def commit_batch(self, checkpoint: dict[str, Any] | None) -> None:
         if not checkpoint:
