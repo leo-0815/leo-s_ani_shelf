@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -209,6 +210,15 @@ class KadokawaSource:
             r"(?:作者資訊：|作者：)\s*(.+?)(?=\s+(?:上市日期：|ISBN：|條碼：|NT\$|\{\{))",
         )
         release_text = self._field(detail, r"上市日期：\s*(20\d{2}/\d{1,2}/\d{1,2})")
+        if not release_text:
+            # Match the same title after width/whitespace normalization.
+            # Never take a date from an unrelated recommendation.
+            compact = lambda value: re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
+            match_title = re.sub(r"【[^】]*(?:出貨|預購)[^】]*】", "", title)
+            matches = list(re.finditer(r"上市日期[:：]\s*(20\d{2}/\d{1,2}/\d{1,2})", page.flat_text))
+            dated = [m for m in matches if compact(match_title) in compact(page.flat_text[max(0, m.start() - 800):m.start()])]
+            if match_title and len(dated) == 1:
+                release_text = dated[0][1]
         isbn = self._field(detail, r"(?:ISBN|條碼)：\s*([0-9Xx-]{8,24})")
         price_text = self._field(
             detail,
@@ -229,7 +239,8 @@ class KadokawaSource:
         if author:
             author = re.sub(r"^作者：\s*", "", author)
             author = author.split("{{", 1)[0].strip()[:500] or None
-        return BookRecord(
+        from ..release_dates import product_record
+        return product_record(
             publisher_code=self.code,
             source_key=source_key,
             title=title,

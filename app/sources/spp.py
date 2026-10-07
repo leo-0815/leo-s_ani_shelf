@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any, Iterator
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
+from ..release_dates import product_record
 from .common import (
     RateLimiter,
     fetch_bytes,
@@ -95,10 +96,14 @@ class SppSource:
         result = {}
         for scheduled in records:
             detail = details.pop(scheduled.source_key, None)
-            result[scheduled.source_key] = replace(
-                detail, release_date=scheduled.release_date,
-                release_precision=scheduled.release_precision,
-            ) if detail else scheduled
+            result[scheduled.source_key] = (
+                detail if detail and detail.release_date else
+                replace(detail, release_date=scheduled.release_date,
+                        release_precision=scheduled.release_precision,
+                        release_status=scheduled.release_status,
+                        release_date_source="unknown", release_checked_at=None)
+                if detail else scheduled
+            )
         for key, record in details.items():
             if record.release_date and record.release_date >= date.today() - timedelta(days=30):
                 result[key] = record
@@ -203,6 +208,7 @@ class SppSource:
         self,
         url: str,
         markup: str,
+        enforce_cutoff: bool = True,
     ) -> tuple[BookRecord | None, date | None]:
         marker = 'SalePageIndexViewModel"] = '
         position = markup.find(marker)
@@ -215,8 +221,8 @@ class SppSource:
         category = str(
             (data.get("CategoryLevelName") or {}).get("Level1_ShopCategory_Name", "")
         ).strip()
-        selling_start = str(data.get("SellingStartDateTime", "")).strip()
-        release = self._date(selling_start[:10])
+        # SellingStartDateTime may be preorder opening, not publication.
+        release = None
         if category not in {"漫畫", "輕小說"}:
             return None, release
         if not title or not sale_page_id:
@@ -233,14 +239,14 @@ class SppSource:
             release = self._date(
                 self._field(description, r"上市日：\s*(20\d{2}/\d{1,2}/\d{1,2})")
             )
-        if release and release < one_year_cutoff():
+        if enforce_cutoff and release and release < one_year_cutoff():
             return None, release
         images = data.get("ImageList") or []
         cover_url = str(images[0].get("PicUrl", "")).strip() if images else ""
         if cover_url.startswith("//"):
             cover_url = "https:" + cover_url
         price = data.get("SuggestPrice")
-        record = BookRecord(
+        record = product_record(
             publisher_code=self.code,
             source_key=book_number or sale_page_id,
             title=title,

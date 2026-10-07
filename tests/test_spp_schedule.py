@@ -27,7 +27,7 @@ class OfficialScheduleTests(unittest.TestCase):
         ]):
             self.assertTrue(source._recent_catalog_urls(1)[0].endswith("/100"))
 
-    def test_schedule_dates_win_while_product_metadata_is_enriched(self):
+    def test_product_dates_win_while_product_metadata_is_enriched(self):
         from unittest.mock import patch
         from datetime import date
         from app.models import BookRecord
@@ -37,7 +37,7 @@ class OfficialScheduleTests(unittest.TestCase):
         detail=BookRecord("spp","A1","測試小說","novel","https://www.spp.com.tw/SalePage/Index/1",release_date=date(2026,9,1),cover_url="https://example.test/cover.jpg",isbn="9781234567890")
         with patch.object(source,"_recent_catalog_urls",return_value=["url"]),patch.object(source,"_fetch_catalog_batch",return_value=[(detail,detail.release_date)]):
             result=source._enrich_schedule([scheduled])
-        self.assertEqual(result[0].release_date,date(2026,10,5))
+        self.assertEqual(result[0].release_date,date(2026,9,1))
         self.assertEqual(result[0].cover_url,detail.cover_url)
 
     def test_product_rating_is_parsed(self):

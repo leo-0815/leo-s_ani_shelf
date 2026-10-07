@@ -8,6 +8,7 @@ from .preferences import visible_book_sql, visible_publisher_sql, publisher_visi
 from .models import (
     CONTENT_RATINGS,
     BookRecord,
+    book_content_hash,
     SYNC_HASH_VERSION,
     catalog_sync_hash,
     detect_edition,
@@ -38,6 +39,8 @@ BOOK_FIELDS = (
     "release_date",
     "release_precision",
     "release_status",
+    "release_date_source",
+    "release_checked_at",
     "source_url",
     "source_hash",
 )
@@ -123,18 +126,19 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
                 )
                 return "inserted"
 
-            if existing["source_hash"] == data["source_hash"]:
-                cursor.execute(
-                    "UPDATE books SET last_seen_at = CURRENT_TIMESTAMP WHERE id = %s",
-                    (existing["id"],),
-                )
-                return "unchanged"
-
             write_data = (
                 _sync_write_data(existing, data)
                 if change_origin in {"cloud_pull", "sync_upload"}
                 else _crawler_write_data(existing, data)
             )
+            write_data["source_hash"] = book_content_hash(write_data)
+            if existing["source_hash"] == write_data["source_hash"]:
+                cursor.execute(
+                    "UPDATE books SET last_seen_at = CURRENT_TIMESTAMP, release_checked_at = %s WHERE id = %s",
+                    (write_data.get("release_checked_at"), existing["id"]),
+                )
+                return "unchanged"
+
             for field in HISTORY_FIELDS:
                 old = existing.get(field)
                 new = write_data.get(field)
@@ -194,6 +198,8 @@ def _apply_series_alias_to_data(
 def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     """Keep an administrator's rating while still accepting fresh publisher metadata."""
     result = dict(data)
+    from .release_dates import merge_release_fields
+    result = merge_release_fields(existing, result)
     if data.get('content_rating') in {None, 'unknown'} and existing.get('content_rating') not in {None, 'unknown'}:
         for field in RATING_FIELDS:
             result[field] = existing.get(field)

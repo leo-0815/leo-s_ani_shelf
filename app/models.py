@@ -5,7 +5,7 @@ import json
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 
@@ -52,6 +52,15 @@ def catalog_sync_hash(row: dict[str, Any]) -> str:
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+
+
+def book_content_hash(data: dict[str, Any]) -> str:
+    payload = dict(data)
+    payload.pop("source_hash", None)
+    payload.pop("release_checked_at", None)
+    if isinstance(payload.get("release_date"), date):
+        payload["release_date"] = payload["release_date"].isoformat()
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def normalize_content_rating(value: str | None) -> str:
@@ -188,6 +197,8 @@ class BookRecord:
     rating_raw: str | None = None
     rating_source: str = "unknown"
     rating_confidence: int = 0
+    release_date_source: str = "unknown"
+    release_checked_at: datetime | None = None
 
     def prepared(self) -> dict[str, Any]:
         from .series import canonical_series_title, series_key
@@ -217,6 +228,8 @@ class BookRecord:
         if self.release_status == "unknown":
             data["release_status"] = infer_status(self.release_date, self.release_precision)
         serializable = dict(data)
+        # Check timestamps are operational metadata, not a content change.
+        serializable.pop("release_checked_at", None)
         serializable["release_date"] = self.release_date.isoformat() if self.release_date else None
         data["source_hash"] = hashlib.sha256(
             json.dumps(serializable, ensure_ascii=False, sort_keys=True).encode("utf-8")
