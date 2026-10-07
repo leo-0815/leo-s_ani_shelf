@@ -21,3 +21,5 @@ jobs:
           cache: pip
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
       - run: python -m unittest discover -v
+      - run: node --check web/app.js
+      - run: node scripts/test_release_display.cjs

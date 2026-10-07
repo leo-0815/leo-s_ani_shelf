@@ -72,6 +72,30 @@ class ReleaseSqlTests(unittest.TestCase):
                                "https://www.kadokawa.com.tw/products/one",
                                release_date=date(2030,10,5), release_precision="day")
         upsert_book(self.base)
+    def test_summary_executes_real_aggregate_sql_and_normalizes_zero_counts(self):
+        from app.release_dates import revalidation_summary
+        self.db.execute("ALTER TABLE publishers ADD COLUMN name TEXT")
+        self.db.execute("UPDATE publishers SET name='角川'")
+        result = revalidation_summary(datetime(2026,10,7,16))
+        self.assertEqual(result['date'], '2026-10-08')
+        self.assertEqual(result['items'][0]['attempted_today'], 0)
+        self.assertEqual(result['items'][0]['daily_limit'], 20)
+
+    def test_summary_classifies_missing_dates_and_errors_without_exposing_errors(self):
+        from app.release_dates import revalidation_summary, record_attempt
+        self.db.execute("ALTER TABLE publishers ADD COLUMN name TEXT")
+        now = datetime(2026,10,8,1)
+        self.assertTrue(claim_attempt('kadokawa', self.one()['id'], now, 20))
+        record_attempt(self.one()['id'], now, now+timedelta(days=1), 'Product page has no explicit publication date')
+        summary = revalidation_summary(now)['items'][0]
+        self.assertEqual(summary['attempted_today'], 1)
+        self.assertEqual(summary['undated_today'], 1)
+        self.assertEqual(summary['failed_today'], 0)
+        record_attempt(self.one()['id'], now, now+timedelta(days=1), 'private internal exception')
+        summary = revalidation_summary(now)['items'][0]
+        self.assertEqual(summary['failed_today'], 1)
+        self.assertNotIn('private', str(summary))
+
     def tearDown(self):
         for p in reversed(self.patches): p.stop()
         self.db.close()

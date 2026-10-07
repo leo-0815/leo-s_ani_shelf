@@ -53,6 +53,17 @@ class ServerInstanceTests(unittest.TestCase):
 
 
 class ServerAuthorizationTests(unittest.TestCase):
+    def test_release_check_summary_is_admin_only(self):
+        from urllib.parse import urlparse
+        handler = self.handler()
+        with patch('app.release_dates.revalidation_summary', return_value={'items':[]}) as summary:
+            handler._visible_authenticated_get(urlparse('/api/release-checks'), {'id':7, 'role':'user'})
+            summary.assert_not_called()
+            self.assertEqual(handler.responses[-1][1], 403)
+            handler._visible_authenticated_get(urlparse('/api/release-checks'), {'id':8, 'role':'admin'})
+            summary.assert_called_once_with()
+            self.assertEqual(handler.responses[-1][1], 200)
+
     def test_preferences_save_targets_current_user_not_payload_user(self) -> None:
         handler = self.handler()
         handler.path = "/api/preferences"

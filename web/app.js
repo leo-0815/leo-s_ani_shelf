@@ -106,6 +106,34 @@ function toast(message, error = false) {
   node.timer = setTimeout(() => node.classList.add("hidden"), 4500);
 }
 
+function publicationStatus(book, short = false) {
+  const status = book.release_display_status || book.release_status;
+  if (status === "pending_confirmation") return short ? "待確認" : "已過預定日，待確認";
+  if (status === "date_confirmed") return short ? "日期已確認" : "日期已到，商品頁日期已確認";
+  return statusLabels[status] || "未知";
+}
+
+function checkedLabel(value) {
+  if (!value) return "尚未確認";
+  return new Intl.DateTimeFormat("zh-TW", {timeZone:"Asia/Taipei", dateStyle:"short", timeStyle:"short"}).format(new Date(value));
+}
+
+function dateProvenance(book) {
+  const source = book.release_date_source === "product" ? "商品頁明確日期" : "出版表／舊資料（未經商品頁確認）";
+  return `<p class="release-provenance">${escapeHtml(source)} · 最後確認：${escapeHtml(checkedLabel(book.release_checked_at_utc))}（台北時間）<br>日期確認不代表實際庫存或已出貨，請以出版社商品頁為準。</p>`;
+}
+
+async function loadReleaseChecks() {
+  const node = $("#releaseCheckSummary");
+  try {
+    const data = await api("/api/release-checks");
+    node.innerHTML = `<p class="source-note">台北日期 ${escapeHtml(data.date)}；每日每家最多 20 本，與手動更新共用額度。摘要涵蓋全部書目，不受瀏覽偏好限制。</p><div class="release-check-grid">${data.items.map(item => `<article class="quality-card"><strong>${escapeHtml(item.name)}</strong><span>今日嘗試 ${item.attempted_today}/${item.daily_limit} · 確認 ${item.confirmed_today}</span><span>缺明確日期 ${item.undated_today} · 失敗 ${item.failed_today} · 未完成 ${item.incomplete_today}</span><span>最近嘗試：${escapeHtml(checkedLabel(item.last_attempt_at))}</span><span>最近確認：${escapeHtml(checkedLabel(item.last_confirmed_at))}</span></article>`).join("")}</div>`;
+  } catch (error) {
+    node.innerHTML = '<p class="source-note">回查摘要暫時無法載入；其他資料品質資訊仍可使用。</p><button class="secondary" id="retryReleaseChecks">重試回查摘要</button>';
+    $("#retryReleaseChecks").addEventListener("click", loadReleaseChecks);
+  }
+}
+
 function releaseLabel(book) {
   if (!book.release_date) return "日期未定";
   const [year, month, day] = book.release_date.split("-");
@@ -299,7 +327,7 @@ function renderBooks() {
     const cardAction = book.is_custom ? '<span class="collection-chip">自建藏書</span>' : `<button class="heart ${selected ? "selected" : ""}" data-wishlist="${book.id}" aria-label="${selected ? "移出" : "加入"}訂選清單">${selected ? "♥" : "♡"}</button>`;
     return `<article class="book-card" data-id="${book.id}" tabindex="0">
       <div class="cover">${image || titleCover(book)}
-        <span class="badge ${escapeHtml(book.release_status)}">${escapeHtml(statusLabels[book.release_status] || "未知")}</span>
+        <span class="badge ${escapeHtml(book.release_display_status || book.release_status)}">${escapeHtml(publicationStatus(book, true))}</span>
         ${cardAction}
       </div>
       <div class="book-meta">
@@ -369,7 +397,7 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
         <button class="series-link" id="openBookSeries">${escapeHtml(book.series_title || "未辨識系列")} · ${escapeHtml(book.volume_label || "單冊")}</button>
         <div class="detail-grid">
           <div><small>上市日期</small><strong>${releaseLabel(book)}</strong></div>
-          <div><small>狀態</small><strong>${escapeHtml(statusLabels[book.release_status] || "未知")}</strong></div>
+          <div><small>狀態</small><strong>${escapeHtml(publicationStatus(book))}</strong></div>
           <div><small>版本</small><strong>${escapeHtml(editionLabels[book.edition_type] || book.edition_type)}</strong></div>
           <div><small>ISBN</small><strong>${escapeHtml(book.isbn || "未提供")}</strong></div>
           <div><small>定價</small><strong>${book.list_price ? `NT$ ${Number(book.list_price).toLocaleString()}` : "未提供"}</strong></div>
@@ -378,6 +406,7 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
         </div>
       </section>
       <div class="detail-body">
+        ${dateProvenance(book)}
         <form class="wishlist-form" id="wishlistForm">
           <div class="form-grid">
             <label>訂選狀態<select id="wishlistState">${Object.entries(wishlistLabels).map(([key, value]) => `<option value="${key}" ${book.wishlist_state === key ? "selected" : ""}>${value}</option>`).join("")}</select></label>
@@ -884,6 +913,7 @@ async function saveNotificationPreferences(event) {
 }
 
 async function loadQuality() {
+  loadReleaseChecks();
   const data = await api("/api/quality");
   $("#qualitySummary").innerHTML = Object.entries(data.counts).map(([key, count]) => `<button class="quality-card" data-quality-filter="${key}">
     <strong>${Number(count).toLocaleString()}</strong><span>${escapeHtml(issueLabels[key])}</span>

@@ -233,6 +233,10 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/quality":
             if self._require_admin(user):
                 self._json(quality_report())
+        elif parsed.path == "/api/release-checks":
+            if self._require_admin(user):
+                from .release_dates import revalidation_summary
+                self._json(revalidation_summary())
         elif parsed.path == "/api/upcoming":
             query = parse_qs(parsed.query)
             self._json({"items": upcoming_books(user_id, int(query.get("days", ["31"])[0]))})
