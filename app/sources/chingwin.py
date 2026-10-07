@@ -6,7 +6,7 @@ import json
 import math
 import re
 from datetime import date
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import Any, Iterator
 from urllib.parse import urljoin
 
@@ -115,10 +115,16 @@ class ChingWinSource:
         # A failed detail request remains unknown; never infer general from a title.
         polite_pause(1.5)
         try:
+            markup = fetch_html(record.source_url, timeout=20, attempts=2)
             rating, raw = parse_product_rating(
-                record.source_url, fetch_html(record.source_url, timeout=20, attempts=2),
+                record.source_url, markup,
                 record.source_key,
             )
+            from ..release_dates import parse_product
+            try:
+                record = parse_product(self, asdict(record), markup)
+            except ValueError:
+                pass  # No explicit SKU publication field: retain catalog fallback.
             return replace(record, content_rating=rating, rating_raw=raw,
                            rating_source='publisher' if rating != 'unknown' else 'unknown',
                            rating_confidence=100 if rating != 'unknown' else 0)
@@ -155,7 +161,8 @@ class ChingWinSource:
         )
         self.latest_cursor = article_urls[0] if article_urls else cursor_value
         if cursor_value in article_urls:
-            article_urls = article_urls[: article_urls.index(cursor_value)]
+            # Revisit the cursor and one older announcement for in-place edits.
+            article_urls = article_urls[: article_urls.index(cursor_value) + 2]
         else:
             article_urls = article_urls[: self.max_articles]
         records: list[BookRecord] = []
@@ -164,7 +171,6 @@ class ChingWinSource:
             records.extend(
                 record
                 for record in self._parse_article(url, fetch_html(url))
-                if record.source_key not in known_keys
             )
         return records
 

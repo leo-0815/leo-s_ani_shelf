@@ -254,7 +254,8 @@ class TongLiSource:
             else None
         )
         media_type = "novel" if "小說書籍資料" in page.text[: detail_start + 300] else "manga"
-        return BookRecord(
+        from ..release_dates import product_record
+        return product_record(
             publisher_code=self.code,
             source_key=source_match.group(1),
             title=title,

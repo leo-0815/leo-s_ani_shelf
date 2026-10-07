@@ -84,7 +84,8 @@ class TohanSource:
         release = date.fromisoformat(release_text) if release_text else None
         product_heading = f"{first_line} {title}"
         media_type = "novel" if re.search(r"(?:華文|翻譯)?輕小說|小說", product_heading) else "manga"
-        return BookRecord(
+        from ..release_dates import product_record
+        return product_record(
             publisher_code=self.code,
             source_key=source_id,
             title=title,

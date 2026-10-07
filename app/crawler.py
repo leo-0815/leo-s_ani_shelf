@@ -218,12 +218,34 @@ def _run_job(
                 _mark_source(code, message)
                 if mode == "backfill":
                     print(f"大型回填：{message}", flush=True)
+            finally:
+                if mode == "incremental":
+                    _refresh_known_releases(source, totals, messages)
         status = "completed" if totals["errors"] == 0 else "partial"
         _finish_job(job_id, status, totals, "\n".join(messages[-10:]))
     except Exception as exc:
         _finish_job(job_id, "failed", totals, f"{exc}\n{traceback.format_exc(limit=3)}")
     finally:
         _job_lock.release()
+
+
+def _refresh_known_releases(source: Any, totals: dict[str, int], messages: list[str]) -> None:
+    from .release_dates import refresh_source
+    try:
+        result = refresh_source(source)
+        totals["discovered"] += result["checked"]
+        totals["updated"] += result["updated"]
+        totals["errors"] += len(result["errors"])
+        summary = f"{source.name} 日期回查：{result['checked']} 本、更新 {result['updated']} 本、日期未提供 {result['unconfirmed']} 本、失敗 {len(result['errors'])} 本"
+        print(summary, flush=True)
+        messages.append(summary)
+        if result["errors"]:
+            messages.extend(result["errors"][-3:])
+            _mark_source(source.code, "\n".join(result["errors"][-3:]))
+    except Exception as exc:
+        totals["errors"] += 1
+        messages.append(f"{source.name} 日期回查失敗：{exc}")
+        _mark_source(source.code, str(exc))
 
 
 def _write_records(

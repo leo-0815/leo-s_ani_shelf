@@ -46,6 +46,20 @@ def _date(value: Any) -> date | None:
         raise ValueError("release_date must use YYYY-MM-DD") from exc
 
 
+def _checked_at(payload: dict[str, Any]):
+    from datetime import datetime, timedelta
+    from .release_dates import parse_checked_at
+    try:
+        value = parse_checked_at(payload.get("release_checked_at"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid release_checked_at") from exc
+    if value and value > datetime.utcnow() + timedelta(minutes=5):
+        raise ValueError("release_checked_at cannot be in the future")
+    if payload.get("release_date_source") == "product" and value is None:
+        raise ValueError("Product release dates require release_checked_at")
+    return value
+
+
 def book_record_from_sync(payload: dict[str, Any]) -> BookRecord:
     """Accept only catalog metadata; account and internal database fields are ignored."""
     publisher_code = _required_text(payload.get("publisher_code"), "publisher_code", 100)
@@ -103,6 +117,8 @@ def book_record_from_sync(payload: dict[str, Any]) -> BookRecord:
             payload.get("rating_source"), RATING_SOURCES, "rating_source", "unknown"
         ),
         rating_confidence=confidence,
+        release_date_source=_choice(payload.get("release_date_source"), {"unknown", "schedule", "product"}, "release_date_source", "unknown"),
+        release_checked_at=_checked_at(payload),
     )
 
 

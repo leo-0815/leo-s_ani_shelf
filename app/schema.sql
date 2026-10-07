@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS books (
     release_date DATE NULL,
     release_precision VARCHAR(20) NOT NULL DEFAULT 'unknown',
     release_status VARCHAR(30) NOT NULL DEFAULT 'unknown',
+    release_date_source VARCHAR(30) NOT NULL DEFAULT 'unknown',
+    release_checked_at DATETIME NULL,
     source_url VARCHAR(1000) NOT NULL,
     source_hash CHAR(64) NOT NULL,
     first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -60,6 +62,15 @@ CREATE TABLE IF NOT EXISTS books (
     KEY idx_books_series (publisher_id, series_key),
     KEY idx_books_rating (content_rating, rating_locked),
     CONSTRAINT fk_books_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS book_release_checks (
+    book_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+    attempted_at DATETIME NOT NULL,
+    next_check_at DATETIME NOT NULL,
+    last_error VARCHAR(1000) NULL,
+    KEY idx_release_checks_due (next_check_at),
+    CONSTRAINT fk_release_checks_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS catalog_changes (

@@ -203,6 +203,8 @@ def ensure_schema() -> None:
         with connection.cursor() as cursor:
             for statement in statements:
                 cursor.execute(statement)
+            _ensure_column(cursor, "books", "release_date_source", "VARCHAR(30) NOT NULL DEFAULT 'unknown'")
+            _ensure_column(cursor, "books", "release_checked_at", "DATETIME NULL")
             _ensure_column(cursor, "wishlist_items", "priority", "TINYINT UNSIGNED NOT NULL DEFAULT 0")
             _ensure_column(cursor, "wishlist_items", "store_name", "VARCHAR(200) NULL")
             _ensure_column(cursor, "wishlist_items", "order_number", "VARCHAR(200) NULL")
