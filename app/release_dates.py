@@ -15,6 +15,49 @@ RELEASE_FIELDS = ("release_date", "release_precision", "release_status",
                   "release_date_source", "release_checked_at")
 DEFAULT_LIMIT = 20
 
+
+def revalidation_summary(now: datetime | None = None) -> dict:
+    """Administrator-only aggregate; never expose raw remote errors or account data."""
+    now = now or datetime.utcnow().replace(microsecond=0)
+    taipei = timezone(timedelta(hours=8))
+    today = now.replace(tzinfo=timezone.utc).astimezone(taipei).date()
+    start = datetime.combine(today, datetime.min.time(), taipei).astimezone(timezone.utc).replace(tzinfo=None)
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT p.code, p.name, "
+                "SUM(CASE WHEN rc.attempted_at >= %s THEN 1 ELSE 0 END) AS attempted_today, "
+                "SUM(CASE WHEN rc.attempted_at >= %s AND b.release_checked_at >= rc.attempted_at "
+                "AND b.release_date_source = 'product' AND rc.last_error IS NULL THEN 1 ELSE 0 END) AS confirmed_today, "
+                "SUM(CASE WHEN rc.attempted_at >= %s AND rc.last_error = %s THEN 1 ELSE 0 END) AS undated_today, "
+                "SUM(CASE WHEN rc.attempted_at >= %s AND rc.last_error IS NOT NULL "
+                "AND rc.last_error <> %s THEN 1 ELSE 0 END) AS failed_today, "
+                "MAX(rc.attempted_at) AS last_attempt_at, MAX(b.release_checked_at) AS last_confirmed_at "
+                "FROM publishers p LEFT JOIN books b ON b.publisher_id = p.id "
+                "LEFT JOIN book_release_checks rc ON rc.book_id = b.id "
+                "WHERE p.code IN ('kadokawa', 'chingwin', 'spp', 'tongli', 'tohan') "
+                "GROUP BY p.id, p.code, p.name ORDER BY p.code",
+                (start, start, start, "Product page has no explicit publication date", start,
+                 "Product page has no explicit publication date"),
+            )
+            rows = cursor.fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        for key in ("attempted_today", "confirmed_today", "undated_today", "failed_today"):
+            item[key] = int(item.get(key) or 0)
+        item["incomplete_today"] = max(0, item["attempted_today"] - item["confirmed_today"] - item["undated_today"] - item["failed_today"])
+        item["daily_limit"] = DEFAULT_LIMIT
+        for key in ("last_attempt_at", "last_confirmed_at"):
+            value = item.get(key)
+            parsed = parse_checked_at(value)
+            item[key] = parsed.replace(tzinfo=timezone.utc).isoformat() if parsed else None
+        items.append(item)
+    return {"date": today.isoformat(), "timezone": "Asia/Taipei", "items": items}
+
+
+
+
 class PublicationDateMissing(ValueError):
     """A readable product with no date is not an HTTP/source failure."""
 
@@ -171,7 +214,7 @@ def claim_attempt(code: str, book_id: int, now: datetime, limit: int) -> bool:
                 "VALUES (%s, %s, %s)", (book_id, now, now),
             )
             cursor.execute(
-                "UPDATE book_release_checks SET attempted_at = %s, next_check_at = %s "
+                "UPDATE book_release_checks SET attempted_at = %s, next_check_at = %s, last_error = NULL "
                 "WHERE book_id = %s AND next_check_at <= %s",
                 (now, now + timedelta(days=1), book_id, now),
             )

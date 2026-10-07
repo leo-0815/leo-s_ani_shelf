@@ -60,6 +60,9 @@ def serialize_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
             result[key] = value
     if "series_follow_scope" in result:
         result["series_following"] = bool(result["series_follow_scope"])
+    if "release_status" in result:
+        from .release_display import release_display
+        result.update(release_display(result))
     return result
 
 

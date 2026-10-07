@@ -71,7 +71,7 @@
         <section class="stats" aria-label="資料摘要">
           <article><span class="stat-icon coral">▦</span><div><small>所有書目</small><strong id="statTotal">—</strong></div></article>
           <article><span class="stat-icon amber">◷</span><div><small>即將出版</small><strong id="statScheduled">—</strong></div></article>
-          <article><span class="stat-icon mint">✓</span><div><small>已上市</small><strong id="statAvailable">—</strong></div></article>
+          <article title="依目前資料日期推算，不代表實際上架或庫存"><span class="stat-icon mint">✓</span><div><small>已到上市日</small><strong id="statAvailable">—</strong></div></article>
           <article><span class="stat-icon slate">?</span><div><small>資料缺日期</small><strong id="statUnknown">—</strong></div></article>
           <article><span class="stat-icon violet">♡</span><div><small>已訂選／追蹤</small><strong id="statWishlist">—</strong></div></article>
         </section>
@@ -108,7 +108,7 @@
                 <option value="">漫畫與小說</option><option value="manga">漫畫</option><option value="novel">輕小說</option>
               </select>
               <select id="statusFilter" aria-label="上市狀態">
-                <option value="">所有狀態</option><option value="scheduled">預定出版</option><option value="scheduled_undated">官方預定・日期未公布</option><option value="available">已上市</option><option value="unknown">資料缺日期</option>
+                <option value="">所有狀態</option><option value="scheduled">預定出版</option><option value="scheduled_undated">官方預定・日期未公布</option><option value="available">已到上市日（日期推算）</option><option value="unknown">資料缺日期</option>
               </select>
               <select id="editionFilter" aria-label="版本">
                 <option value="">所有版本</option><option value="standard">一般版</option><option value="special">特裝版</option><option value="limited">限定版</option><option value="first_print">首刷限定</option><option value="deluxe">豪華限定</option><option value="collector">收藏版</option><option value="digital">電子版</option>
@@ -272,6 +272,7 @@
             <div><p class="eyebrow">DATA CHECK</p><h2>資料品質</h2></div>
             <p>標記缺漏與可疑資料，不會自行刪除。</p>
           </div>
+          <div class="release-check-section"><h3>商品日期回查</h3><div id="releaseCheckSummary" aria-live="polite">載入回查摘要…</div></div>
           <div class="quality-summary" id="qualitySummary"></div>
           <div class="quality-list" id="qualityList"></div>
         </section>
