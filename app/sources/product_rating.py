@@ -12,7 +12,7 @@ from .chingwin_rating import parse_product_rating as parse_chingwin
 from ..release_dates import product_url_valid
 
 PARSER_VERSIONS = {"chingwin": "chingwin_rating_v1", "spp": "spp_rating_v1", "tongli": "tongli_rating_v1",
-                   "kadokawa": "kadokawa_rating_v1", "tohan": "tohan_rating_v1"}
+                   "kadokawa": "kadokawa_rating_v1", "tohan": "tohan_rating_v2"}
 LABELS = {"普": "general", "普遍級": "general", "限制級": "restricted_18",
           "保護級": "protected_6", "輔12級": "guidance_12", "輔15級": "guidance_15"}
 
@@ -42,12 +42,15 @@ def parse_rating(code: str, url: str, markup: str, key: str,
                       r"^(?:🔞\s*)?(普遍級|限制級|保護級|輔12級|輔15級)\s*$")
     if code == "tohan":
         page = parse_page(markup)
-        authors = list(re.finditer(r"(?:^|\n)作者\n", page.text))
+        text = page.text
+        # Cut recommendations BEFORE finding the product's last author field.
+        # A recommendation may have its own author/grade but no ISBN.
+        for ending in ("相關推薦", "訂購需知", "訂購須知"):
+            text = text.split(ending, 1)[0]
+        authors = list(re.finditer(r"(?:^|\n)作者\n", text))
         if not authors:
             return "unknown", None
-        text = page.text[authors[-1].end():]
-        for ending in ("相關推薦", "訂購需知"):
-            text = text.split(ending, 1)[0]
+        text = text[authors[-1].end():]
         flat = " ".join(text.split())
         isbn = re.search(r"ISBN\s*[:：]?\s*([0-9Xx-]{8,24})", flat)
         if expected_isbn and isbn and expected_isbn.replace("-", "") != isbn[1].replace("-", ""):
