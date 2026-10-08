@@ -56,11 +56,11 @@ class NotificationAudienceSqlTests(unittest.TestCase):
         email=collect_email_events(datetime(2030,10,8),today=date(2030,10,9))
         for user_id in (1,2,3,4):
             user_events=[e for e in email if e.user_id==user_id]
-            self.assertEqual(len(user_events),30 if user_id in (1,4) else 135)
+            self.assertEqual(len(user_events),105 if user_id in (1,4) else 135)
             if user_id in (1,4):
                 self.assertEqual({e.book_id for e in user_events},{row[0] for row in self.allowed})
             self.assertEqual({e.event_type for e in user_events},
                              {"release_milestone","release_date_changed","followed_series_new_book"})
         discord=collect_events(datetime(2030,10,8),today=date(2030,10,9),lead_days=(0,))
         self.assertEqual({e.user_id for e in discord},{2,4})
-        self.assertEqual(len(discord),165)
+        self.assertEqual(len(discord),240)

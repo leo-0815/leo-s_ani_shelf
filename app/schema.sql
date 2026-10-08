@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS books (
     rating_locked BOOLEAN NOT NULL DEFAULT FALSE,
     rating_checked_at DATETIME NULL,
     rating_parser_version VARCHAR(40) NULL,
+    bl_category VARCHAR(100) NULL,
     author VARCHAR(500) NULL,
     isbn VARCHAR(32) NULL,
     cover_url VARCHAR(1000) NULL,

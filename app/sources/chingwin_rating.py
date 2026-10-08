@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 from .common import parse_page
 
-RATING_PARSER_VERSION = "chingwin_rating_v1"
+RATING_PARSER_VERSION = "chingwin_rating_v2"
 LABELS = {"普": "general", "普遍級": "general", "18限": "restricted_18",
           "限": "restricted_18", "限制級": "restricted_18"}
 
@@ -25,7 +25,7 @@ def parse_product_rating(url: str, markup: str, expected_key: str | None = None)
         return "unknown", None
     text = parse_page(markup).flat_text
     block = re.search(
-        rf"產品編號\s*[:：]\s*{re.escape(sku)}\b(.{{0,1500}}?)定價", text,
+        rf"產品編號\s*[:：]\s*{re.escape(sku)}\b(.{{0,1500}}?)(?:定價|優惠價)", text,
     )
     if not block:
         return "unknown", None

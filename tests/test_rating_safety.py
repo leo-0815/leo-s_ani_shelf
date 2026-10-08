@@ -13,7 +13,7 @@ class RatingSafetyTests(unittest.TestCase):
             "https://www.ching-win.com.tw/product-detail/X",content_rating="general",
             rating_raw="普",rating_source="publisher",rating_confidence=100,
             rating_checked_at=self.now-timedelta(days=1),
-            rating_parser_version="chingwin_rating_v1").prepared()
+            rating_parser_version="chingwin_rating_v2").prepared()
         self.old.update(id=1,publisher_id=1,rating_locked=False)
         self.unknown=dict(self.old,content_rating="unknown",rating_raw=None,
                           rating_source="unknown",rating_confidence=0,rating_checked_at=self.now)

@@ -204,7 +204,7 @@ function renderPublisherSummary() {
   const selected = state.selectedPublishers;
   const names = selected === null ? [] : selectablePublishers().filter(item => selected.includes(item.code)).map(item => item.name);
   $("#publisherSummary").textContent = selected === null ? "全部出版社" : !selected.length ? "未選擇出版社" : selected.length === 1 ? (names[0] || selected[0]) : `已選 ${selected.length} 家出版社`;
-  $("#publisherSelectionHint").textContent = selected === null ? (state.generalAudience ? "一般向：各家僅顯示已確認普遍級；可任選多家" : "顯示全部出版社；可任選多家") : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社沒有可見書目";
+  $("#publisherSelectionHint").textContent = selected === null ? (state.generalAudience ? "一般向：排除已確認 BL／R18；可任選多家" : "顯示全部出版社；可任選多家") : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社沒有可見書目";
 }
 
 function addPublisherParams(params) {
@@ -916,8 +916,8 @@ async function loadQuality() {
   loadReleaseChecks();
   const data = await api("/api/quality");
   const coverage = $("#ratingCoverageSummary");
-  if (coverage) coverage.innerHTML = '<p class="source-note">涵蓋全部出版社書目，不受瀏覽偏好限制。舊資料缺少商品頁確認證據時，會暫時從一般向隱藏；本機與每日補查可逐步補齊。</p><div class="release-check-grid">' +
-    (data.rating_coverage || []).map(item => `<article class="quality-card"><strong>${escapeHtml(item.name)}</strong><span>全部 ${Number(item.total || 0).toLocaleString()} · 可靠普遍級 ${Number(item.confirmed_general || 0).toLocaleString()}</span><span>限制級 ${Number(item.restricted || 0).toLocaleString()} · 未知 ${Number(item.unknown || 0).toLocaleString()}</span><span>舊普遍級待補證據 ${Number(item.needs_confirmation || 0).toLocaleString()}</span></article>`).join("") + '</div>';
+  if (coverage) coverage.innerHTML = '<p class="source-note">涵蓋全部出版社書目，不受瀏覽偏好限制。一般向只排除已確認 BL／R18；未知或缺少普遍級證據不再隱藏。本機與每日補查逐步補齊分類。</p><div class="release-check-grid">' +
+    (data.rating_coverage || []).map(item => `<article class="quality-card"><strong>${escapeHtml(item.name)}</strong><span>全部 ${Number(item.total || 0).toLocaleString()} · 一般向可見 ${Number(item.general_audience_visible || 0).toLocaleString()}</span><span>限制級 ${Number(item.restricted || 0).toLocaleString()} · BL ${Number(item.bl || 0).toLocaleString()}</span><span>分級未知 ${Number(item.unknown || 0).toLocaleString()} · 已確認普遍級 ${Number(item.confirmed_general || 0).toLocaleString()}</span></article>`).join("") + '</div>';
   $("#qualitySummary").innerHTML = Object.entries(data.counts).map(([key, count]) => `<button class="quality-card" data-quality-filter="${key}">
     <strong>${Number(count).toLocaleString()}</strong><span>${escapeHtml(issueLabels[key])}</span>
   </button>`).join("");

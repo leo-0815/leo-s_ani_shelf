@@ -37,17 +37,24 @@ def visible_publisher_sql(alias: str = "p", book_alias: str = "b") -> str:
     return visible_book_sql(book_alias)
 
 
+def _general_audience_sql(prefix: str) -> str:
+    # General audience means non-BL and non-R18, NOT publisher grade "general".
+    # Unknown grades/categories remain visible. Positive labels alone exclude.
+    return (f"(COALESCE({prefix}content_rating, 'unknown') <> 'restricted_18' AND "
+            f"COALESCE({prefix}bl_category, '') = '')")
+
+
 def visible_book_sql(alias: str = "b") -> str:
     if not _GENERAL_AUDIENCE.get():
         return "1 = 1"
-    return _trusted_general_sql(f"{alias}." if alias else "")
+    return _general_audience_sql(f"{alias}." if alias else "")
 
 
 def notification_visibility_sql(book_alias: str = "b", user_alias: str = "u") -> str:
     """Per-recipient policy; independent of the web request ContextVar."""
     return (f"(NOT COALESCE((SELECT up.general_audience FROM user_preferences up "
             f"WHERE up.user_id = {user_alias}.id), {user_alias}.role <> 'admin') OR "
-            f"{_trusted_general_sql(book_alias + '.')})")
+            f"{_general_audience_sql(book_alias + '.')})")
 
 
 def publisher_visible(code: str) -> bool:

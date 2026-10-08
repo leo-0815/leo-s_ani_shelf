@@ -43,7 +43,7 @@ class DetailRecommendationSqlTests(unittest.TestCase):
                 volume_label TEXT, author TEXT, release_status TEXT,
                 release_date TEXT, content_rating TEXT, rating_source TEXT,
                 rating_confidence INTEGER, rating_checked_at TEXT,
-                rating_parser_version TEXT, rating_locked INTEGER);
+                rating_parser_version TEXT, rating_locked INTEGER, bl_category TEXT);
             CREATE TABLE wishlist_items(book_id INTEGER, user_id INTEGER);
             CREATE TABLE recommendation_dismissals(book_id INTEGER, user_id INTEGER);
         """)
@@ -59,11 +59,12 @@ class DetailRecommendationSqlTests(unittest.TestCase):
             (9,"series-a","general",1,95),
             (10,"series-b","general",1,95),
         ]:
-            self.db.execute("INSERT INTO books VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            self.db.execute("INSERT INTO books VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (book_id,publisher,"Book "+str(book_id),series,series,"novel",
                  str(book_id),"Author","available","2026-01-01",rating,
                  "publisher" if rating != "unknown" else "unknown",confidence,
-                 "2026-10-09", "chingwin_rating_v1" if publisher == 1 else "spp_rating_v1", 0))
+                 "2026-10-09", "chingwin_rating_v1" if publisher == 1 else "spp_rating_v1", 0,
+                 "BL漫畫" if book_id == 9 else None))
         self.cloud = "user_id" in inspect.signature(repository.list_book_recommendations).parameters
 
         @contextmanager
@@ -86,7 +87,7 @@ class DetailRecommendationSqlTests(unittest.TestCase):
     def test_general_mode_executes_series_and_author_sql_and_filters_candidates(self):
         with visibility_scope(True):
             items = self.recommendations()
-        self.assertEqual({item["id"] for item in items}, {2,5})
+        self.assertEqual({item["id"] for item in items}, {2,4,5,7,8,10})
         types = {item["id"]: item["recommendation_types"] for item in items}
         self.assertIn("book_series", types[2])
         self.assertIn("book_author", types[5])
@@ -98,7 +99,7 @@ class DetailRecommendationSqlTests(unittest.TestCase):
 
     def test_hidden_seed_cannot_produce_recommendations(self):
         with visibility_scope(True):
-            for book_id in (3,4,9):
+            for book_id in (3,9):
                 with self.subTest(book_id=book_id):
                     with self.assertRaises(KeyError):
                         self.recommendations(book_id)
@@ -107,5 +108,5 @@ class DetailRecommendationSqlTests(unittest.TestCase):
         self.db.execute("INSERT INTO wishlist_items VALUES (2,1)")
         self.db.execute("INSERT INTO recommendation_dismissals VALUES (5,1)")
         with visibility_scope(True):
-            self.assertEqual([item["id"] for item in self.recommendations()], [])
+            self.assertEqual({item["id"] for item in self.recommendations()}, {4,7,8,10})
 

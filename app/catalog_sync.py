@@ -122,6 +122,7 @@ def book_record_from_sync(payload: dict[str, Any]) -> BookRecord:
         release_checked_at=_checked_at(payload),
         rating_checked_at=peer_rating_time(payload),
         rating_parser_version=_optional_text(payload.get("rating_parser_version"), 40),
+        bl_category=_optional_text(payload.get("bl_category"), 100),
     )
 
 
@@ -152,11 +153,11 @@ def compare_catalog_manifests(
     local_items: Iterable[dict[str, Any]], remote_items: Iterable[dict[str, Any]]
 ) -> dict[str, Any]:
     """Compare peers by publisher/source identity without touching personal data."""
-    def keyed(items: Iterable[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    def keyed(items: Iterable[dict[str, Any]]) -> dict:
         return {
-            (str(item.get("publisher_code") or ""), str(item.get("source_key") or "")): str(
-                item.get("sync_hash") or item.get("source_hash") or ""
-            )
+            (str(item.get("publisher_code") or ""), str(item.get("source_key") or "")): (
+                str(item.get("sync_hash") or item.get("source_hash") or ""),
+                bool(item["is_bl"]) if "is_bl" in item else None)
             for item in items
         }
 
@@ -164,7 +165,8 @@ def compare_catalog_manifests(
     remote = keyed(remote_items)
     local_keys = set(local)
     remote_keys = set(remote)
-    different = sorted(key for key in local_keys & remote_keys if local[key] != remote[key])
+    different = sorted(key for key in local_keys & remote_keys if local[key][0] != remote[key][0] or
+                       (local[key][1] is not None and remote[key][1] is not None and local[key][1] != remote[key][1]))
     return {
         "same": len(local_keys & remote_keys) - len(different),
         "local_only": [list(key) for key in sorted(local_keys - remote_keys)],
