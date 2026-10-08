@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .rating_merge import peer_rating_time
 
 from datetime import date
 from typing import Any, Iterable
@@ -119,6 +120,8 @@ def book_record_from_sync(payload: dict[str, Any]) -> BookRecord:
         rating_confidence=confidence,
         release_date_source=_choice(payload.get("release_date_source"), {"unknown", "schedule", "product"}, "release_date_source", "unknown"),
         release_checked_at=_checked_at(payload),
+        rating_checked_at=peer_rating_time(payload),
+        rating_parser_version=_optional_text(payload.get("rating_parser_version"), 40),
     )
 
 

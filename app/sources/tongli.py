@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .product_rating import rating_fields
 
 import hashlib
 import re
@@ -270,6 +271,8 @@ class TongLiSource:
             volume_label=volume or extract_volume(title),
             series_title=infer_series_title(title),
             source_url=url,
+            **rating_fields(
+                self.code, url, markup, source_match.group(1), isbn),
         )
 
     @staticmethod

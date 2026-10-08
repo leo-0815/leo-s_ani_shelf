@@ -125,9 +125,13 @@ class ChingWinSource:
                 record = parse_product(self, asdict(record), markup)
             except ValueError:
                 pass  # No explicit SKU publication field: retain catalog fallback.
+            from .product_rating import PARSER_VERSIONS
+            from datetime import datetime
             return replace(record, content_rating=rating, rating_raw=raw,
                            rating_source='publisher' if rating != 'unknown' else 'unknown',
-                           rating_confidence=100 if rating != 'unknown' else 0)
+                           rating_confidence=100 if rating != 'unknown' else 0,
+                           rating_checked_at=datetime.utcnow().replace(microsecond=0),
+                           rating_parser_version=PARSER_VERSIONS[self.code])
         except Exception as exc:
             self.errors.append(f'青文商品分級 {record.source_key}: {exc}')
             return record

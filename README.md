@@ -209,3 +209,11 @@ python -m unittest discover -v
 
 新增官方商品分級解析與可中止、可續跑的舊資料補查。一般向逐本放行政策與抽驗紀錄見 [青文分級說明](docs/chingwin-ratings.md)。本機主版本可使用「分級資料補查.bat」補查並同步；雲端可執行 `python anishelf.py ratings --mode 30m`。不新增模型、圖片下載或執行期套件。
 
+# 分級補查（2026-10）
+
+青文、尖端與東立使用共用的官方商品分級解析。新書增量更新與本機舊書補查使用相同規則；不同版本不沿用同系列分級，沒有明確欄位或欄位衝突時保持未知。
+
+本機執行 `python anishelf.py ratings --sources all --mode 60m --preflight pull --sync`，或雙擊「分級資料補查.bat」。每家最多 10 本輪巡，支援 30m、60m、complete、continuous。唯讀測試使用 `--dry-run --limit 10`；預設不寫入、不上傳。每本結果與 checkpoint 在同一交易保存；Ctrl+C 只保留已提交結果。未知 7 天後重試、錯誤 1 天後重試，解析器版本更新可重新檢查。
+
+分級確認時間／解析版本可隨書目同步；鎖定分級與較新確認不被舊資料覆蓋。上傳失敗保留 durable outbox，下次再送。不包含帳號、訂選、藏書等私人資料；同步雜湊仍使用 v1。此功能只補分級，不擴大歷史爬蟲範圍。
+

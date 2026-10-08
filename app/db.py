@@ -258,6 +258,8 @@ def ensure_schema() -> None:
             _migrate_followed_series_keys(cursor)
             _seed_series_aliases(cursor)
             _apply_approved_series_aliases(cursor)
+            _ensure_column(cursor, "books", "rating_checked_at", "DATETIME NULL")
+            _ensure_column(cursor, "books", "rating_parser_version", "VARCHAR(40) NULL")
             from .preferences import migrate_general_audience_default
             migrate_general_audience_default(cursor, cloud=True)
 

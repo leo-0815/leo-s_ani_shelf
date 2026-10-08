@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS books (
     rating_source VARCHAR(30) NOT NULL DEFAULT 'unknown',
     rating_confidence TINYINT UNSIGNED NOT NULL DEFAULT 0,
     rating_locked BOOLEAN NOT NULL DEFAULT FALSE,
+    rating_checked_at DATETIME NULL,
+    rating_parser_version VARCHAR(40) NULL,
     author VARCHAR(500) NULL,
     isbn VARCHAR(32) NULL,
     cover_url VARCHAR(1000) NULL,
