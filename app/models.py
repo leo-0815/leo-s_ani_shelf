@@ -60,6 +60,7 @@ def book_content_hash(data: dict[str, Any]) -> str:
     payload.pop("release_checked_at", None)
     payload.pop("rating_checked_at", None)
     payload.pop("rating_parser_version", None)
+    payload.pop("bl_category", None)  # Derived classification travels in the change feed.
     if isinstance(payload.get("release_date"), date):
         payload["release_date"] = payload["release_date"].isoformat()
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
@@ -201,6 +202,7 @@ class BookRecord:
     rating_confidence: int = 0
     rating_checked_at: datetime | None = None
     rating_parser_version: str | None = None
+    bl_category: str | None = None
     release_date_source: str = "unknown"
     release_checked_at: datetime | None = None
 
@@ -211,6 +213,8 @@ class BookRecord:
         data["title"] = normalize_text(self.title)
         data["normalized_title"] = normalize_text(self.title).casefold()
         data["author"] = normalize_text(self.author or "") or None
+        from .sources.product_audience import normalize_bl_category
+        data["bl_category"] = normalize_bl_category(self.bl_category)
         rating_candidate = self.content_rating
         if rating_candidate == "unknown" and self.rating_raw:
             rating_candidate = self.rating_raw
@@ -236,6 +240,7 @@ class BookRecord:
         serializable.pop("release_checked_at", None)
         serializable.pop("rating_checked_at", None)
         serializable.pop("rating_parser_version", None)
+        serializable.pop("bl_category", None)
         serializable["release_date"] = self.release_date.isoformat() if self.release_date else None
         data["source_hash"] = hashlib.sha256(
             json.dumps(serializable, ensure_ascii=False, sort_keys=True).encode("utf-8")

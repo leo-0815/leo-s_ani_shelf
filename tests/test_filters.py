@@ -37,7 +37,9 @@ class PublisherFilterTests(unittest.TestCase):
     def test_general_mode_cannot_be_overridden_by_publisher_selection(self):
         with visibility_scope(True):
             sql, values = self.sql({"publishers": "chingwin,spp", "general_audience": "false"})
-            self.assertIn("rating_checked_at IS NOT NULL", sql)
+            self.assertIn("<> 'restricted_18'", sql)
+            self.assertIn("bl_category", sql)
+            self.assertNotIn("rating_checked_at", sql)
             self.assertEqual(values, ["chingwin", "spp"])
 
     def test_scope_is_request_local_and_reset_even_after_errors(self):
@@ -54,9 +56,9 @@ class PublisherFilterTests(unittest.TestCase):
         self.assertTrue(publisher_visible("chingwin"))
         with visibility_scope(True):
             self.assertTrue(publisher_visible("chingwin"))
-            self.assertIn("rating_confidence = 100", visible_book_sql())
+            self.assertIn("<> 'restricted_18'", visible_book_sql())
             self.assertTrue(publisher_visible("spp"))
-            self.assertIn("rating_locked = TRUE", visible_book_sql())
+            self.assertIn("bl_category", visible_book_sql())
 
     def test_repository_filters_count_and_page_before_limit(self):
         for fn, filters in (
@@ -76,7 +78,8 @@ class PublisherFilterTests(unittest.TestCase):
             for call in cursor.execute.call_args_list[:2]:
                 sql, params = call.args
                 self.assertIn("p.code IN (%s, %s)", sql)
-                self.assertIn("rating_checked_at IS NOT NULL", sql)
+                self.assertIn("<> 'restricted_18'", sql)
+                self.assertIn("bl_category", sql)
                 self.assertIn("spp", params)
                 self.assertIn("tongli", params)
             self.assertEqual(list(cursor.execute.call_args.args[1])[-2:], [20, 40])
@@ -89,7 +92,7 @@ class PublisherFilterTests(unittest.TestCase):
             tx.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
             collection.list_collection(7, {"publishers": "spp,tongli"}, 20, 40)
         for call in cursor.execute.call_args_list[:2]:
-            self.assertIn("rating_checked_at IS NOT NULL", call.args[0])
+            self.assertIn("bl_category", call.args[0])
             self.assertIn("p.code IN (%s, %s)", call.args[0])
             self.assertEqual(list(call.args[1])[:3], [7, "spp", "tongli"])
 
@@ -100,7 +103,7 @@ class PublisherFilterTests(unittest.TestCase):
             tx.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
             kwargs = {"user_id": 7} if "user_id" in inspect.signature(repository.get_book).parameters else {}
             self.assertIsNone(repository.get_book(1, **kwargs))
-            self.assertIn("rating_checked_at IS NOT NULL", cursor.execute.call_args.args[0])
+            self.assertIn("bl_category", cursor.execute.call_args.args[0])
             kwargs = {"user_id": 7} if "user_id" in inspect.signature(repository.get_series).parameters else {}
             self.assertIsNone(repository.get_series(publisher_code="chingwin", series_title="test", **kwargs))
 
@@ -115,8 +118,8 @@ class PublisherFilterTests(unittest.TestCase):
         candidate_sql = [c.args[0] for c in cursor.execute.call_args_list if "LIMIT" in c.args[0]]
         self.assertEqual(len(candidate_sql), 4)
         for sql in candidate_sql:
-            self.assertIn("rating_checked_at IS NOT NULL", sql)
-            self.assertLess(sql.index("rating_checked_at IS NOT NULL"), sql.index("LIMIT"))
+            self.assertIn("bl_category", sql)
+            self.assertLess(sql.index("bl_category"), sql.index("LIMIT"))
 
     def test_preferences_are_private_persistent_boolean_and_default_on(self):
         with patch("app.preferences.transaction") as tx:

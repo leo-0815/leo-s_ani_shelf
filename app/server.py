@@ -630,6 +630,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "protocol_version": PROTOCOL_VERSION,
                     "sync_hash_version": SYNC_HASH_VERSION,
+                    "audience_classification_version": 1,
                     **catalog_sync_status(),
                 }
             )

@@ -11,6 +11,7 @@ from .models import book_content_hash
 from .repository import BOOK_FIELDS, RATING_FIELDS, _crawler_write_data, _record_catalog_change
 from .sources.common import fetch_html
 from .sources.product_rating import PARSER_VERSIONS, parse_rating
+from .sources.product_audience import parse_bl_category
 from .release_dates import product_url_valid, url_patterns
 
 CHECK_TABLE_SQL = """
@@ -29,14 +30,15 @@ CREATE TABLE IF NOT EXISTS book_rating_checks (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
+# Old completed age checks receive one BL inspection; age proof versions stay unchanged.
+CHECK_VERSIONS = {code: version + "_bl1" for code, version in PARSER_VERSIONS.items()}
+
 
 def candidates(limit: int, keys: list[str] | None = None, *, dry_run: bool = False,
                code: str = "chingwin", excluded: set[int] | None = None,
                recent_days: int | None = None) -> list[dict[str, Any]]:
-    values: list[Any] = [code, PARSER_VERSIONS[code], *url_patterns(code)]
-    clause = ("p.code = %s AND b.rating_locked = FALSE AND "
-              "(b.content_rating = 'unknown' OR (b.content_rating = 'general' AND "
-              "(b.rating_checked_at IS NULL OR b.rating_parser_version IS NULL OR b.rating_parser_version <> %s))) "
+    values: list[Any] = [code, *url_patterns(code)]
+    clause = ("p.code = %s AND b.rating_locked = FALSE "
               "AND b.media_type IN ('novel','manga') "
               "AND (REPLACE(b.source_url,'http://','https://') LIKE %s OR REPLACE(b.source_url,'http://','https://') LIKE %s)")
     if keys:
@@ -53,7 +55,7 @@ def candidates(limit: int, keys: list[str] | None = None, *, dry_run: bool = Fal
     if not dry_run:
         join = " LEFT JOIN book_rating_checks r ON r.book_id = b.id"
         clause += " AND (r.book_id IS NULL OR r.parser_version <> %s OR r.retry_after <= UTC_TIMESTAMP())"
-        values.append(PARSER_VERSIONS[code])
+        values.append(CHECK_VERSIONS[code])
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -65,7 +67,8 @@ def candidates(limit: int, keys: list[str] | None = None, *, dry_run: bool = Fal
 
 
 def save_result(book_id: int, rating: str, raw: str | None, error: str | None = None,
-                *, code: str = "chingwin", checked_at: datetime | None = None) -> bool:
+                *, code: str = "chingwin", checked_at: datetime | None = None,
+                bl_category: str | None = None) -> bool:
     """Result, content change and durable checkpoint commit atomically."""
     now = checked_at or datetime.utcnow().replace(microsecond=0)
     status = "error" if error else "confirmed" if rating != "unknown" else "unknown"
@@ -83,16 +86,17 @@ def save_result(book_id: int, rating: str, raw: str | None, error: str | None = 
                                 content_rating=rating, rating_raw=raw,
                                 rating_source="publisher" if rating != "unknown" else "unknown",
                                 rating_confidence=100 if rating != "unknown" else 0,
-                                rating_checked_at=now, rating_parser_version=PARSER_VERSIONS[code])
+                                rating_checked_at=now, rating_parser_version=PARSER_VERSIONS[code],
+                                bl_category=bl_category)
                 merged = _crawler_write_data(existing, incoming)
-                changed_fields = [field for field in RATING_FIELDS if existing.get(field) != merged.get(field)]
+                changed_fields = [field for field in (*RATING_FIELDS, "bl_category") if existing.get(field) != merged.get(field)]
                 source_hash = book_content_hash(merged)
                 cursor.execute(
                     "UPDATE books SET content_rating=%s, rating_raw=%s, rating_source=%s, "
-                    "rating_confidence=%s, rating_checked_at=%s, rating_parser_version=%s, source_hash=%s WHERE id=%s",
+                    "rating_confidence=%s, rating_checked_at=%s, rating_parser_version=%s, source_hash=%s, bl_category=%s WHERE id=%s",
                     (merged["content_rating"], merged["rating_raw"], merged["rating_source"],
                      merged["rating_confidence"], merged.get("rating_checked_at"),
-                     merged.get("rating_parser_version"), source_hash, book_id))
+                     merged.get("rating_parser_version"), source_hash, merged.get("bl_category"), book_id))
                 confirmation_changed = any(existing.get(field) != merged.get(field)
                                            for field in ("rating_checked_at", "rating_parser_version"))
                 if changed_fields or confirmation_changed:
@@ -101,7 +105,7 @@ def save_result(book_id: int, rating: str, raw: str | None, error: str | None = 
                 if changed_fields:
                     changed = True
                     if rating == "unknown":
-                        status = "revoked"
+                        status = "classified" if merged.get("bl_category") else "revoked"
             if existing.get("rating_locked"):
                 status, retry = "locked", None
             cursor.execute(
@@ -110,7 +114,7 @@ def save_result(book_id: int, rating: str, raw: str | None, error: str | None = 
                 "ON DUPLICATE KEY UPDATE parser_version=VALUES(parser_version),result=VALUES(result),"
                 "raw_label=VALUES(raw_label),retry_after=VALUES(retry_after),last_error=VALUES(last_error),"
                 "checked_at=VALUES(checked_at),uploaded_at=NULL,attempts=attempts+1",
-                (book_id, PARSER_VERSIONS[code], status, (raw or "")[:100] or None,
+                (book_id, CHECK_VERSIONS[code], status, (raw or "")[:100] or None,
                  retry, (error or "")[:300] or None, now))
     return changed
 
@@ -120,15 +124,19 @@ def check_book(row: dict, *, dry_run: bool = False) -> tuple[str, str | None, st
     code = row.get("publisher_code", "chingwin")
     url = row["source_url"].replace("http://", "https://", 1)
     rating, raw, error = "unknown", None, None
+    bl_category = None
     try:
         if not product_url_valid(code, url, row["source_key"]):
             raise ValueError("No edition-specific official product URL; kept unknown")
-        rating, raw = parse_rating(code, url, fetch_html(url, timeout=20, attempts=2),
+        markup = fetch_html(url, timeout=20, attempts=2)
+        rating, raw = parse_rating(code, url, markup,
                                    row["source_key"], row.get("isbn"))
+        bl_category = parse_bl_category(code, url, markup, row["source_key"])
     except Exception as exc:
         error = str(exc)
     # An interrupted request cannot mark the item as completed.
-    changed = False if dry_run else save_result(int(row["id"]), rating, raw, error, code=code, checked_at=observed_at)
+    changed = False if dry_run else save_result(int(row["id"]), rating, raw, error, code=code,
+                                              checked_at=observed_at, bl_category=bl_category)
     return rating, raw, error, changed
 
 
@@ -208,7 +216,7 @@ def finish(counts: dict, outgoing: list[dict], sync: bool) -> dict:
                         "r.attempts AS rating_check_attempts "
                         "FROM book_rating_checks r JOIN books b ON b.id=r.book_id "
                         "JOIN publishers p ON p.id=b.publisher_id "
-                        "WHERE r.result IN ('confirmed','revoked') AND r.uploaded_at IS NULL ORDER BY b.id LIMIT 100")
+                        "WHERE r.result IN ('confirmed','revoked','classified') AND r.uploaded_at IS NULL ORDER BY b.id LIMIT 100")
                     outgoing=list(cursor.fetchall())
             if not outgoing:
                 break

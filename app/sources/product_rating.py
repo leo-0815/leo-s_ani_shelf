@@ -11,7 +11,7 @@ from .common import parse_page
 from .chingwin_rating import parse_product_rating as parse_chingwin
 from ..release_dates import product_url_valid
 
-PARSER_VERSIONS = {"chingwin": "chingwin_rating_v1", "spp": "spp_rating_v1", "tongli": "tongli_rating_v1",
+PARSER_VERSIONS = {"chingwin": "chingwin_rating_v2", "spp": "spp_rating_v1", "tongli": "tongli_rating_v1",
                    "kadokawa": "kadokawa_rating_v1", "tohan": "tohan_rating_v2"}
 LABELS = {"普": "general", "普遍級": "general", "限制級": "restricted_18",
           "保護級": "protected_6", "輔12級": "guidance_12", "輔15級": "guidance_15"}
@@ -93,8 +93,10 @@ def parse_rating(code: str, url: str, markup: str, key: str,
 def rating_fields(code: str, url: str, markup: str, key: str,
                   isbn: str | None = None) -> dict:
     rating, raw = parse_rating(code, url, markup, key, isbn)
+    from .product_audience import parse_bl_category
     return dict(content_rating=rating, rating_raw=raw,
                 rating_source="publisher" if rating != "unknown" else "unknown",
                 rating_confidence=100 if rating != "unknown" else 0,
                 rating_checked_at=datetime.utcnow().replace(microsecond=0),
-                rating_parser_version=PARSER_VERSIONS[code])
+                rating_parser_version=PARSER_VERSIONS[code],
+                bl_category=parse_bl_category(code, url, markup, key))
