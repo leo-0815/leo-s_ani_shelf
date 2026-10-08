@@ -262,8 +262,8 @@
           <div class="section-heading"><div><p class="eyebrow">PREFERENCES</p><h2>偏好設定</h2></div></div>
           <form id="preferencesForm" class="preferences-form">
             <label class="preference-switch"><input id="generalAudience" type="checkbox" checked> 一般向</label>
-            <p>勾選後，青文僅顯示已確認普遍級的書目；分級未知與其他級別暫不顯示。所有出版社的已知限制級也會隱藏。取消勾選則恢復全部內容。</p>
-            <p class="preference-warning">以官方分級與人工確認為依據；其他出版社的未知分級與私人手動書籍尚未完整分類，無法保證所有內容皆適合所有年齡。既有藏書、訂選及追蹤紀錄不會被刪除；備份與通知設定不受影響。</p>
+            <p>勾選後，所有出版社僅顯示商品頁明確確認的普遍級，或管理員鎖定確認的普遍級。未知、證據不足及其他級別暫不顯示；取消勾選恢復全部內容。</p>
+            <p class="preference-warning">一般向也適用書籍通知。既有藏書、訂選與追蹤紀錄不會被刪除；取消一般向可查看隱藏書目。私人手動藏書僅自己可見，尚未經分級審核；備份不受篩選限制。</p>
             <button class="primary" type="submit">儲存偏好設定</button>
           </form>
         </section>
@@ -274,6 +274,7 @@
           </div>
           <div class="release-check-section"><h3>商品日期回查</h3><div id="releaseCheckSummary" aria-live="polite">載入回查摘要…</div></div>
           <div class="quality-summary" id="qualitySummary"></div>
+          <div class="release-check-section"><h3>分級補查覆蓋率</h3><div id="ratingCoverageSummary" aria-live="polite">載入分級摘要…</div></div>
           <div class="quality-list" id="qualityList"></div>
         </section>
 

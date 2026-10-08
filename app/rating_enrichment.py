@@ -77,11 +77,12 @@ def save_result(book_id: int, rating: str, raw: str | None, error: str | None = 
             if not existing:
                 return False
             changed = False
-            if rating != "unknown" and not existing.get("rating_locked"):
+            if not error and not existing.get("rating_locked"):
                 incoming = {field: existing.get(field) for field in BOOK_FIELDS}
                 incoming.update(publisher_code=code, source_key=existing["source_key"],
                                 content_rating=rating, rating_raw=raw,
-                                rating_source="publisher", rating_confidence=100,
+                                rating_source="publisher" if rating != "unknown" else "unknown",
+                                rating_confidence=100 if rating != "unknown" else 0,
                                 rating_checked_at=now, rating_parser_version=PARSER_VERSIONS[code])
                 merged = _crawler_write_data(existing, incoming)
                 changed_fields = [field for field in RATING_FIELDS if existing.get(field) != merged.get(field)]
@@ -92,10 +93,15 @@ def save_result(book_id: int, rating: str, raw: str | None, error: str | None = 
                     (merged["content_rating"], merged["rating_raw"], merged["rating_source"],
                      merged["rating_confidence"], merged.get("rating_checked_at"),
                      merged.get("rating_parser_version"), source_hash, book_id))
-                if changed_fields:
+                confirmation_changed = any(existing.get(field) != merged.get(field)
+                                           for field in ("rating_checked_at", "rating_parser_version"))
+                if changed_fields or confirmation_changed:
                     _record_catalog_change(cursor, book_id, "rating", source_hash,
-                                           "crawler", changed_fields)
+                                           "crawler", changed_fields or ["rating_confirmation"])
+                if changed_fields:
                     changed = True
+                    if rating == "unknown":
+                        status = "revoked"
             if existing.get("rating_locked"):
                 status, retry = "locked", None
             cursor.execute(
@@ -202,7 +208,7 @@ def finish(counts: dict, outgoing: list[dict], sync: bool) -> dict:
                         "r.attempts AS rating_check_attempts "
                         "FROM book_rating_checks r JOIN books b ON b.id=r.book_id "
                         "JOIN publishers p ON p.id=b.publisher_id "
-                        "WHERE r.result='confirmed' AND r.uploaded_at IS NULL ORDER BY b.id LIMIT 100")
+                        "WHERE r.result IN ('confirmed','revoked') AND r.uploaded_at IS NULL ORDER BY b.id LIMIT 100")
                     outgoing=list(cursor.fetchall())
             if not outgoing:
                 break

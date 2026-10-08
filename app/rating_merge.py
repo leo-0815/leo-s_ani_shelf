@@ -10,7 +10,15 @@ def merge_rating_fields(existing: dict, incoming: dict) -> dict:
     old_time = parse_checked_at(existing.get("rating_checked_at"))
     new_time = parse_checked_at(incoming.get("rating_checked_at"))
     preserve = bool(existing.get("rating_locked"))
-    preserve |= incoming.get("content_rating") in {None, "unknown"} and existing.get("content_rating") not in {None, "unknown"}
+    from .sources.product_rating import PARSER_VERSIONS
+    fresh_unknown = (incoming.get("content_rating") == "unknown" and new_time
+                     and incoming.get("rating_parser_version") in PARSER_VERSIONS.values()
+                     and (not old_time or new_time >= old_time))
+    # A successfully inspected but ambiguous product invalidates old "general".
+    # Sparse announcements, HTTP failures and explicit adult grades stay protected.
+    preserve |= (incoming.get("content_rating") in {None, "unknown"}
+                 and existing.get("content_rating") not in {None, "unknown"}
+                 and not (existing.get("content_rating") == "general" and fresh_unknown))
     preserve |= bool(old_time and (not new_time or new_time < old_time))
     # Old clients without provenance cannot downgrade an explicit adult grade.
     preserve |= existing.get("content_rating") == "restricted_18" and incoming.get("content_rating") == "general" and (not new_time or not old_time or new_time <= old_time)

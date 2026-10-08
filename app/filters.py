@@ -4,14 +4,15 @@ import re
 from typing import Any
 
 
-def add_publisher_filter(filters: dict[str, str], where: list[str], values: list[Any]) -> None:
+def add_publisher_filter(filters: dict[str, str], where: list[str], values: list[Any], *, private_book_column: str | None = None) -> None:
     """Shared catalog filter; legacy publisher=code remains supported.
 
     No filter means all publishers; publishers=none explicitly selects none.
     Values, including unknown codes, are always passed as SQL parameters.
     """
     from .preferences import visible_publisher_sql
-    where.append(visible_publisher_sql())
+    visibility = visible_publisher_sql()
+    where.append(f"({private_book_column} IS NULL OR {visibility})" if private_book_column else visibility)
     raw = filters.get("publishers", filters.get("publisher", ""))
     if not raw:
         return

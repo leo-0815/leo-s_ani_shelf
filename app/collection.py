@@ -93,7 +93,7 @@ def list_collection(user_id: int, filters: dict[str, str], limit=100, offset=0, 
         where.append("(COALESCE(b.title,c.title) LIKE %s OR COALESCE(b.author,c.author) LIKE %s OR COALESCE(b.isbn,c.isbn) LIKE %s)")
         values.extend(["%" + term + "%"] * 3)
     from .filters import add_publisher_filter
-    add_publisher_filter(filters, where, values)
+    add_publisher_filter(filters, where, values, private_book_column="c.book_id")
     for key, expr in (("media_type", "COALESCE(b.media_type,c.media_type)"),
                       ("owned_format", "c.owned_format"), ("edition", "COALESCE(b.edition_type,c.edition_type)"),
                       ("status", "b.release_status")):
@@ -162,7 +162,7 @@ def collection_stats(user_id: int) -> dict[str, int]:
                 "SUM(c.owned_format IN ('digital','both')) AS purchased_digital,"
                 "COUNT(DISTINCT CONCAT(b.publisher_id,':',b.series_key,':',b.media_type)) AS purchased_series,"
                 "COALESCE(SUM(c.paid_price),0) AS purchased_spend FROM collection_items c "
-                "LEFT JOIN books b ON b.id=c.book_id WHERE c.user_id=%s " + f"AND {visible_book_sql()}", (user_id,))
+                "LEFT JOIN books b ON b.id=c.book_id WHERE c.user_id=%s " + f"AND (c.book_id IS NULL OR {visible_book_sql()})", (user_id,))
             return {key:int(value or 0) for key,value in cursor.fetchone().items()}
 
 
