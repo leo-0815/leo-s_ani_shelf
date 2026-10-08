@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 from app import rating_refresh as r
 from app.sources.product_rating import parse_rating
-from test_release_dates import Connection
+from tests.test_release_dates import Connection
 
 class MorePublisherRatingTests(unittest.TestCase):
     def test_kadokawa_only_product_summary_not_navigation(self):
