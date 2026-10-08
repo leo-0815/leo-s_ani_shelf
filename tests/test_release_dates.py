@@ -41,7 +41,7 @@ class ReleaseSqlTests(unittest.TestCase):
         self.db = sqlite3.connect(":memory:", detect_types=sqlite3.PARSE_DECLTYPES)
         self.db.row_factory = sqlite3.Row
         types = {"release_date":"DATE", "release_checked_at":"TIMESTAMP", "list_price":"INTEGER",
-                 "rating_confidence":"INTEGER"}
+                 "rating_confidence":"INTEGER", "rating_checked_at":"TIMESTAMP"}
         cols = ", ".join(f"{f} {types.get(f, 'TEXT')}" for f in BOOK_FIELDS)
         self.db.executescript(
             "CREATE TABLE publishers (id INTEGER PRIMARY KEY, code TEXT);"
@@ -103,6 +103,20 @@ class ReleaseSqlTests(unittest.TestCase):
         return dict(self.db.execute("SELECT * FROM books WHERE source_key='one'").fetchone())
     def dates(self):
         return self.db.execute("SELECT COUNT(*) FROM release_history WHERE field_name='release_date'").fetchone()[0]
+    def test_rating_sync_sql_preserves_newer_and_refreshes_confirmation(self):
+        general = replace(self.base, content_rating="general", rating_raw="普遍級",
+                          rating_source="publisher", rating_confidence=100,
+                          rating_checked_at=datetime(2026,10,7), rating_parser_version="test_v1")
+        self.assertEqual(upsert_book(general), "updated")
+        self.assertEqual(upsert_book(replace(general, rating_checked_at=datetime(2026,10,8))), "unchanged")
+        self.assertEqual(self.one()["rating_checked_at"], datetime(2026,10,8))
+        adult = replace(general, content_rating="restricted_18", rating_raw="限制級",
+                        rating_checked_at=datetime(2026,10,9))
+        upsert_book(adult)
+        upsert_book(general, change_origin="sync_upload")
+        self.assertEqual(self.one()["content_rating"], "restricted_18")
+        self.assertEqual(self.one()["rating_checked_at"], datetime(2026,10,9))
+
     def test_postponement_then_same_date_has_one_history_event(self):
         checked = replace(self.base, release_date=date(2030,10,12), release_date_source="product",
                           release_checked_at=datetime(2026,10,7))

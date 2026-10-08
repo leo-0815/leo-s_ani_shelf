@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .product_rating import rating_fields
 
 import gzip
 import json
@@ -261,7 +262,8 @@ class SppSource:
             volume_label=extract_volume(title),
             series_title=infer_series_title(title),
             source_url=url,
-            rating_raw=self._field(description, r"等\s*級：\s*(普遍級|限制級|保護級|輔導級)"),
+            **rating_fields(
+                self.code, url, markup, book_number or sale_page_id, isbn),
         )
         return record, release
 

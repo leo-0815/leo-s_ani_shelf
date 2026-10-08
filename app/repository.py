@@ -32,6 +32,8 @@ BOOK_FIELDS = (
     "rating_raw",
     "rating_source",
     "rating_confidence",
+    "rating_checked_at",
+    "rating_parser_version",
     "author",
     "isbn",
     "cover_url",
@@ -137,8 +139,10 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
             write_data["source_hash"] = book_content_hash(write_data)
             if existing["source_hash"] == write_data["source_hash"]:
                 cursor.execute(
-                    "UPDATE books SET last_seen_at = CURRENT_TIMESTAMP, release_checked_at = %s WHERE id = %s",
-                    (write_data.get("release_checked_at"), existing["id"]),
+                    "UPDATE books SET last_seen_at = CURRENT_TIMESTAMP, release_checked_at = %s, "
+                    "rating_checked_at = %s, rating_parser_version = %s WHERE id = %s",
+                    (write_data.get("release_checked_at"), write_data.get("rating_checked_at"),
+                     write_data.get("rating_parser_version"), existing["id"]),
                 )
                 return "unchanged"
 
@@ -203,6 +207,8 @@ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[
     result = dict(data)
     from .release_dates import merge_release_fields
     result = merge_release_fields(existing, result)
+    from .rating_merge import merge_rating_fields
+    result = merge_rating_fields(existing, result)
     if data.get('content_rating') in {None, 'unknown'} and existing.get('content_rating') not in {None, 'unknown'}:
         for field in RATING_FIELDS:
             result[field] = existing.get(field)

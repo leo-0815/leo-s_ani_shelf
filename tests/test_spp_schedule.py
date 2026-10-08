@@ -47,6 +47,6 @@ class OfficialScheduleTests(unittest.TestCase):
         data={"Title":"测试漫畫(1)","Id":1,"CategoryLevelName":{"Level1_ShopCategory_Name":"漫畫"},
               "SellingStartDateTime":date.today().isoformat(),"ShortDescription":"書 號：A1 等 級：限制級"}
         markup='SalePageIndexViewModel"] = '+json.dumps(data)
-        record,_date=SppSource()._parse_detail("https://example.test/1",markup)
+        record,_date=SppSource()._parse_detail("https://www.spp.com.tw/SalePage/Index/1",markup)
         self.assertEqual(record.prepared()["content_rating"],"restricted_18")
 
