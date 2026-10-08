@@ -144,6 +144,12 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
                     (write_data.get("release_checked_at"), write_data.get("rating_checked_at"),
                      write_data.get("rating_parser_version"), existing["id"]),
                 )
+                confirmation_changed = any(existing.get(field) != write_data.get(field)
+                                           for field in ("rating_checked_at", "rating_parser_version"))
+                if confirmation_changed:
+                    _record_catalog_change(cursor, int(existing["id"]), "rating",
+                                           write_data["source_hash"], change_origin,
+                                           ("rating_confirmation",))
                 return "unchanged"
 
             for field in HISTORY_FIELDS:
@@ -209,9 +215,6 @@ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[
     result = merge_release_fields(existing, result)
     from .rating_merge import merge_rating_fields
     result = merge_rating_fields(existing, result)
-    if data.get('content_rating') in {None, 'unknown'} and existing.get('content_rating') not in {None, 'unknown'}:
-        for field in RATING_FIELDS:
-            result[field] = existing.get(field)
     if "docs.google.com/spreadsheets/" in str(data.get("source_url") or ""):
         for field in ("author", "isbn", "cover_url", "list_price", *RATING_FIELDS):
             if result.get(field) in {None, "", "unknown", 0}:
@@ -234,12 +237,9 @@ def _sync_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str
         "cover_url",
         "list_price",
         "release_date",
-        "rating_raw",
     }
     unknown_fields = {
         "media_type",
-        "content_rating",
-        "rating_source",
         "release_precision",
         "release_status",
     }
@@ -1239,7 +1239,28 @@ def quality_report(limit: int = 50) -> dict[str, Any]:
                 (min(max(limit, 1), 200),),
             )
             items = [serialize_row(row) for row in cursor.fetchall()]
-    return {"counts": counts, "items": items, "total_issues": sum(counts.values())}
+    return {"counts": counts, "items": items, "total_issues": sum(counts.values()),
+            "rating_coverage": rating_coverage()}
+
+
+def rating_coverage() -> list[dict[str, Any]]:
+    """Administrator aggregate of the entire catalog, not just visible books."""
+    from .preferences import _trusted_general_sql
+    trusted = _trusted_general_sql("b.")
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT p.code, p.name, COUNT(b.id) AS total, "
+                f"SUM(CASE WHEN {trusted} THEN 1 ELSE 0 END) AS confirmed_general, "
+                "SUM(CASE WHEN b.content_rating = 'restricted_18' THEN 1 ELSE 0 END) AS restricted, "
+                "SUM(CASE WHEN b.content_rating = 'unknown' THEN 1 ELSE 0 END) AS unknown, "
+                f"SUM(CASE WHEN b.content_rating = 'general' AND NOT {trusted} THEN 1 ELSE 0 END) AS needs_confirmation "
+                "FROM publishers p LEFT JOIN books b ON b.publisher_id = p.id "
+                "GROUP BY p.id, p.code, p.name ORDER BY p.id"
+            )
+            numeric = {"total", "confirmed_general", "restricted", "unknown", "needs_confirmation"}
+            return [{key: int(value or 0) if key in numeric else value
+                     for key, value in row.items()} for row in cursor.fetchall()]
 
 
 def upcoming_books(user_id: int, days: int = 31) -> list[dict[str, Any]]:

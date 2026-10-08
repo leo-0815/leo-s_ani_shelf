@@ -20,28 +20,34 @@ def visibility_scope(enabled: bool) -> Iterator[None]:
 
 
 def _trusted_general_sql(prefix: str) -> str:
+    from .sources.product_rating import PARSER_VERSIONS
+    versions = " ".join(f"WHEN '{code}' THEN '{version}'"
+                        for code, version in PARSER_VERSIONS.items())
+    # Exact parser/publisher pairing prevents stale or cross-source proof.
+    proof = (f"{prefix}rating_checked_at IS NOT NULL AND "
+             f"{prefix}rating_parser_version = (SELECT CASE code {versions} END "
+             f"FROM publishers WHERE id = {prefix}publisher_id)")
     return (f"({prefix}content_rating = 'general' AND "
-            f"{prefix}rating_source IN ('publisher', 'manual') AND "
-            f"{prefix}rating_confidence = 100)")
+            f"{prefix}rating_confidence = 100 AND "
+            f"(({prefix}rating_source = 'publisher' AND {proof}) OR "
+            f"({prefix}rating_source = 'manual' AND {prefix}rating_locked = TRUE)))")
 
 
 def visible_publisher_sql(alias: str = "p", book_alias: str = "b") -> str:
-    if not _GENERAL_AUDIENCE.get():
-        return "1 = 1"
-    prefix = f"{book_alias}." if book_alias else ""
-    return (f"(COALESCE({prefix}content_rating, 'unknown') <> 'restricted_18' AND "
-            f"({alias}.code IS NULL OR {alias}.code <> 'chingwin' OR "
-            f"{_trusted_general_sql(prefix)}))")
+    return visible_book_sql(book_alias)
 
 
 def visible_book_sql(alias: str = "b") -> str:
-    prefix = f"{alias}." if alias else ""
     if not _GENERAL_AUDIENCE.get():
         return "1 = 1"
-    return (f"(COALESCE({prefix}content_rating, 'unknown') <> 'restricted_18' AND "
-            f"({prefix}publisher_id IS NULL OR {prefix}publisher_id NOT IN "
-            "(SELECT id FROM publishers WHERE code = 'chingwin') OR "
-            f"{_trusted_general_sql(prefix)}))")
+    return _trusted_general_sql(f"{alias}." if alias else "")
+
+
+def notification_visibility_sql(book_alias: str = "b", user_alias: str = "u") -> str:
+    """Per-recipient policy; independent of the web request ContextVar."""
+    return (f"(NOT COALESCE((SELECT up.general_audience FROM user_preferences up "
+            f"WHERE up.user_id = {user_alias}.id), {user_alias}.role <> 'admin') OR "
+            f"{_trusted_general_sql(book_alias + '.')})")
 
 
 def publisher_visible(code: str) -> bool:
