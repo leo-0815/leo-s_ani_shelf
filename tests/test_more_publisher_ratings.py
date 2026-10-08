@@ -23,6 +23,16 @@ class MorePublisherRatingTests(unittest.TestCase):
             markup=f"<p>作者</p><p>某作者 ISBN 9781234567890 級別：{label}</p><p>相關推薦</p><p>級別：普遍級</p>"
             self.assertEqual(parse_rating("tohan",url,markup,"1")[0],expected)
             self.assertEqual(parse_rating("tohan",url,markup,"1","9780000000000")[0],"unknown")
+    def test_tohan_recommendation_author_cannot_supply_product_grade(self):
+        url="https://www.tohan.com.tw/product.php?act=view&id=1"
+        for actual,expected in [("無","unknown"),("限制級","restricted_18")]:
+            for boundary in ("相關推薦","訂購需知","訂購須知"):
+                markup=(f"<p>作者</p><p>商品作者 ISBN 9781234567890 級別：{actual}</p>"
+                        f"<p>{boundary}</p><p>作者</p><p>推薦作者 級別：普遍級</p>")
+                self.assertEqual(parse_rating("tohan",url,markup,"1")[0],expected)
+        self.assertEqual(parse_rating("tohan",url,
+            "<p>相關推薦</p><p>作者</p><p>推薦作者 級別：普遍級</p>","1")[0],"unknown")
+
     def test_budget_executes_real_atomic_sql_and_is_shared(self):
         db=sqlite3.connect(":memory:")
         db.execute("CREATE TABLE rating_refresh_budget (budget_day DATE PRIMARY KEY,attempted INTEGER DEFAULT 0)")
