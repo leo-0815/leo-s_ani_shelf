@@ -11,7 +11,7 @@ from .models import book_content_hash
 from .repository import BOOK_FIELDS, RATING_FIELDS, _crawler_write_data, _record_catalog_change
 from .sources.common import fetch_html
 from .sources.product_rating import PARSER_VERSIONS, parse_rating
-from .release_dates import product_url_valid
+from .release_dates import product_url_valid, url_patterns
 
 CHECK_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS book_rating_checks (
@@ -33,8 +33,12 @@ CREATE TABLE IF NOT EXISTS book_rating_checks (
 def candidates(limit: int, keys: list[str] | None = None, *, dry_run: bool = False,
                code: str = "chingwin", excluded: set[int] | None = None,
                recent_days: int | None = None) -> list[dict[str, Any]]:
-    values: list[Any] = [code]
-    clause = "p.code = %s AND b.rating_locked = FALSE AND b.content_rating = 'unknown' AND b.media_type IN ('novel','manga')"
+    values: list[Any] = [code, PARSER_VERSIONS[code], *url_patterns(code)]
+    clause = ("p.code = %s AND b.rating_locked = FALSE AND "
+              "(b.content_rating = 'unknown' OR (b.content_rating = 'general' AND "
+              "(b.rating_checked_at IS NULL OR b.rating_parser_version IS NULL OR b.rating_parser_version <> %s))) "
+              "AND b.media_type IN ('novel','manga') "
+              "AND (REPLACE(b.source_url,'http://','https://') LIKE %s OR REPLACE(b.source_url,'http://','https://') LIKE %s)")
     if keys:
         clause += " AND b.source_key IN (" + ",".join(["%s"] * len(keys)) + ")"
         values.extend(keys)
@@ -42,9 +46,9 @@ def candidates(limit: int, keys: list[str] | None = None, *, dry_run: bool = Fal
         clause += " AND b.id NOT IN (" + ",".join(["%s"] * len(excluded)) + ")"
         values.extend(sorted(excluded))
     if recent_days is not None:
-        clause += " AND (b.first_seen_at >= %s OR b.release_date >= %s)"
+        clause += " AND (b.release_date BETWEEN %s AND %s OR (b.release_date IS NULL AND b.first_seen_at >= %s))"
         since = datetime.utcnow() - timedelta(days=recent_days)
-        values.extend([since, since.date()])
+        values.extend([since.date(), (datetime.utcnow()+timedelta(days=90)).date(), since])
     join = ""
     if not dry_run:
         join = " LEFT JOIN book_rating_checks r ON r.book_id = b.id"
@@ -61,9 +65,9 @@ def candidates(limit: int, keys: list[str] | None = None, *, dry_run: bool = Fal
 
 
 def save_result(book_id: int, rating: str, raw: str | None, error: str | None = None,
-                *, code: str = "chingwin") -> bool:
+                *, code: str = "chingwin", checked_at: datetime | None = None) -> bool:
     """Result, content change and durable checkpoint commit atomically."""
-    now = datetime.utcnow().replace(microsecond=0)
+    now = checked_at or datetime.utcnow().replace(microsecond=0)
     status = "error" if error else "confirmed" if rating != "unknown" else "unknown"
     retry = now + timedelta(days=1 if error else 7) if rating == "unknown" else None
     with transaction() as connection:
@@ -106,6 +110,7 @@ def save_result(book_id: int, rating: str, raw: str | None, error: str | None = 
 
 
 def check_book(row: dict, *, dry_run: bool = False) -> tuple[str, str | None, str | None, bool]:
+    observed_at = datetime.utcnow().replace(microsecond=0)
     code = row.get("publisher_code", "chingwin")
     url = row["source_url"].replace("http://", "https://", 1)
     rating, raw, error = "unknown", None, None
@@ -117,7 +122,7 @@ def check_book(row: dict, *, dry_run: bool = False) -> tuple[str, str | None, st
     except Exception as exc:
         error = str(exc)
     # An interrupted request cannot mark the item as completed.
-    changed = False if dry_run else save_result(int(row["id"]), rating, raw, error, code=code)
+    changed = False if dry_run else save_result(int(row["id"]), rating, raw, error, code=code, checked_at=observed_at)
     return rating, raw, error, changed
 
 

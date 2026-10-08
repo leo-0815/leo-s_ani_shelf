@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from .config import get_settings
 from .crawler import get_job, run_incremental_sources
 from .db import ensure_schema
+from .rating_refresh import refresh_recent_ratings
 from .notifications import (
     NotificationError,
     crawl_status_event,
@@ -24,6 +25,11 @@ def main() -> None:
     started_at = datetime.utcnow() - timedelta(minutes=1)
     job_id = run_incremental_sources(SCHEDULED_SOURCES)
     job = get_job(job_id) or {"id": job_id, "status": "failed", "message": "找不到更新結果"}
+    try:
+        rating_result = refresh_recent_ratings()
+    except Exception as exc:
+        # Fail-closed visibility still blocks unconfirmed books; preserve notifications.
+        rating_result = {"error": str(exc)}
     status_event = crawl_status_event(job)
     email_failure = None
     try:
@@ -49,7 +55,7 @@ def main() -> None:
     )
     print(
         json.dumps(
-            {"job": job, "discord": discord_result, "email": email_result},
+            {"job": job, "rating_refresh": rating_result, "discord": discord_result, "email": email_result},
             ensure_ascii=False,
             default=str,
             indent=2,

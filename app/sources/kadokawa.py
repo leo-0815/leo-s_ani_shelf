@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .product_rating import rating_fields
 
 import re
 import unicodedata
@@ -259,6 +260,7 @@ class KadokawaSource:
             volume_label=extract_volume(title),
             series_title=infer_series_title(title),
             source_url=url,
+            **rating_fields(self.code, url, markup, source_key, isbn),
         )
 
     @classmethod

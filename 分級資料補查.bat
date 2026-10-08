@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 echo 分級補查：每家最多10本輪巡；先保存本機，再同步至雲端。
-echo 出版社代碼：chingwin=青文 spp=尖端 tongli=東立
+echo 出版社代碼：chingwin=青文 spp=尖端 tongli=東立 kadokawa=角川 tohan=東販
 echo 輸入 all 或多家代碼，以英文逗號分隔。
 set "sources=all"
 set /p sources=出版社 [all]:

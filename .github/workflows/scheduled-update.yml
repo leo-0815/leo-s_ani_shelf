@@ -6,6 +6,11 @@ on:
     - cron: "15 0 * * *"
   workflow_dispatch:
     inputs:
+      test_ratings_only:
+        description: Check at most 5 recent product grades without notifications
+        required: false
+        default: false
+        type: boolean
       test_email_only:
         description: Send one Gmail SMTP test email without updating publishers
         required: false
@@ -74,8 +79,11 @@ jobs:
             fi
           done
       - name: Update publishers and send notifications
-        if: ${{ github.event_name == 'schedule' || (inputs.test_email_only != true && inputs.test_database_only != true && inputs.migrate_database_only != true && inputs.test_email_user_id == '') }}
+        if: ${{ github.event_name == 'schedule' || (inputs.test_ratings_only != true && inputs.test_email_only != true && inputs.test_database_only != true && inputs.migrate_database_only != true && inputs.test_email_user_id == '') }}
         run: python -m app.scheduled
+      - name: Test bounded product grading without notifications
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_ratings_only == true }}
+        run: python -m app.rating_refresh --limit 5
       - name: Test TiDB connection
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_database_only == true }}
         run: python -m app.database_check
