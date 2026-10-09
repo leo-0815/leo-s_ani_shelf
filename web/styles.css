@@ -72,6 +72,8 @@ button, select { cursor: pointer; }
 .account-menu strong { font-size: 11px; }
 .account-menu small { margin-top: 2px; color: var(--muted); font-size: 9px; }
 .account-menu .text-button { padding: 6px; }
+.account-menu .text-button { white-space: nowrap; flex-shrink: 0; }
+.account-menu > span { min-width: 0; }
 
 .shell { min-height: 100vh; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 .sidebar { position: sticky; top: 0; height: 100vh; padding: 34px 20px 24px; background: #26232a; color: #fff; display: flex; flex-direction: column; }
@@ -96,6 +98,15 @@ main { min-width: 0; padding: 42px clamp(24px, 4vw, 58px) 70px; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 0; font-family: Georgia, "Noto Serif TC", serif; font-size: clamp(30px, 3.4vw, 44px); font-weight: 500; }
 .top-actions { display: flex; align-items: center; gap: 12px; }
+.topbar h1 { white-space: nowrap; }
+@media (min-width: 701px) and (max-width: 1250px) {
+  .topbar { flex-wrap: wrap; gap: 18px; }
+  .topbar > div:first-child { flex: 1; min-width: 160px; }
+  .account-menu { order: 1; }
+  .top-actions { order: 2; flex-basis: 100%; }
+  .top-actions .searchbox { width: 100%; }
+}
+@media (max-width: 700px) { .account-menu { max-width: 100%; flex-wrap: wrap; } }
 .searchbox { width: min(38vw, 390px); display: flex; align-items: center; gap: 9px; padding: 0 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); box-shadow: 0 4px 18px rgba(50,43,37,.04); }
 .searchbox span { color: var(--muted); font-size: 21px; }
 .searchbox input { width: 100%; padding: 11px 0; border: 0; outline: none; background: transparent; color: var(--ink); }
@@ -498,3 +509,12 @@ dialog::backdrop { background: rgba(32,29,34,.56); backdrop-filter: blur(3px); }
   .recommendation-grid { padding: 14px; }
   .recommendation-card { grid-template-columns: 92px 1fr; }
 }
+/* Browser-only visitor shelf controls, using the existing warm card palette. */
+.guest-entry { display: block; width: 100%; margin: 14px 0; }
+.login-card small { display: block; line-height: 1.7; color: #746c67; }
+.guest-storage { border-top: 1px solid #e9e1dc; margin-top: 24px; padding: 28px 32px; }
+.guest-storage p, .guest-note p { max-width: 760px; color: #746c67; line-height: 1.8; }
+.guest-note { padding: 22px; background: #fff8f3; border-radius: 16px; }
+.guest-storage .form-actions { flex-wrap: wrap; }
+#guestImportStatus { line-height: 1.8; color: #ac4939; }
+@media (max-width: 700px) { .guest-storage { padding: 24px 18px; } }

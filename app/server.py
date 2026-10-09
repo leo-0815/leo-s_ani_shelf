@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .abuse import LIMITER, RequestError, category, csv_cell, session_identity, validate_query
+from . import guest
 
 from .auth import (
     AuthenticationError,
@@ -197,7 +198,8 @@ class Handler(BaseHTTPRequestHandler):
             # let an attacker reset this quota by inventing session cookies.
             token = ""
         peer = str(getattr(self, "client_address", ("unknown",))[0])
-        identity = session_identity(token, peer)
+        visitor = None if parsed.path.startswith("/auth/") else guest.identity(cookie_value(self.headers.get("Cookie"), guest.COOKIE))
+        identity = "guest:" + visitor if visitor and not token else session_identity(token, peer)
         return self._rate_check(f"pre:{identity}:{bucket}", bucket)
 
     def _server_failure(self, status: HTTPStatus = HTTPStatus.INTERNAL_SERVER_ERROR) -> None:
@@ -212,6 +214,9 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             if parsed.path == "/api/health":
                 self._health()
+                return
+            if parsed.path.startswith("/api/guest/"):
+                self._guest_get(parsed)
                 return
             if (parsed.path.startswith("/api/") and not parsed.path.startswith("/api/catalog-sync/")) or parsed.path.startswith("/auth/"):
                 if not self._guard_request(parsed, "GET"):
@@ -459,6 +464,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         try:
             parsed = urlparse(self.path)
+            if parsed.path in {"/api/guest/start", "/api/guest/end"}:
+                self._guest_session(parsed.path)
+                return
+            if parsed.path == "/api/guest/resolve":
+                expected = urlparse(get_settings().public_url)
+                if self.headers.get("Origin", "") != f"{expected.scheme}://{expected.netloc}":
+                    raise RequestError("訪客操作必須來自本站", 403)
+                visitor = guest.identity(cookie_value(self.headers.get("Cookie"), guest.COOKIE))
+                if not visitor:
+                    self._json({"error": "訪客識別已過期", "guest_expired": True}, HTTPStatus.UNAUTHORIZED)
+                elif self._rate_check(f"guest:{visitor}:browse", "browse"):
+                    self._json(guest.resolve_series(self._body()))
+                return
+            if parsed.path.startswith("/api/guest/"):
+                self._json({"error": "訪客私人資料只能保存在瀏覽器"}, HTTPStatus.FORBIDDEN)
+                return
             if parsed.path == "/api/catalog-sync/books":
                 if not self._require_catalog_sync():
                     return
@@ -484,7 +505,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             payload = self._body()
             user_id = int(user["id"])
-            if parsed.path == "/api/preferences":
+            if parsed.path in {"/api/guest-import/preview", "/api/guest-import/apply"}:
+                from .guest_import import migrate
+                if parsed.path.endswith("/apply") and not self._rate_check(f"guest-import:{user_id}", "write", 1):
+                    return
+                self._json(migrate(user_id, payload.get("data"), apply=parsed.path.endswith("/apply"), token=payload.get("token", "")))
+            elif parsed.path == "/api/preferences":
                 self._json(set_preferences(user_id, payload))
             elif parsed.path == "/api/update":
                 if not self._require_admin(user):
@@ -683,6 +709,47 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Authentication required"}, HTTPStatus.UNAUTHORIZED)
         return user
 
+    def _guest_session(self, path: str) -> None:
+        settings = get_settings()
+        expected = urlparse(settings.public_url)
+        origin = self.headers.get("Origin", "")
+        if origin != f"{expected.scheme}://{expected.netloc}":
+            raise RequestError("訪客操作必須來自本站", 403)
+        self._body()
+        token = cookie_value(self.headers.get("Cookie"), guest.COOKIE)
+        visitor = guest.identity(token)
+        if visitor:
+            if not self._rate_check(f"guest:{visitor}:auth", "auth"):
+                return
+        else:
+            peer = str(getattr(self, "client_address", ("unknown",))[0])
+            # Only issuance is source-limited. Verified visitors have independent
+            # quotas even behind Render's proxy; no spoofable forwarded IP used.
+            if not self._rate_check(f"guest-issue:{peer}", "auth"):
+                return
+        if path.endswith("/end"):
+            self._json({"ok": True}, cookies=[clear_cookie(guest.COOKIE)])
+            return
+        if not visitor:
+            visitor, token = guest.issue()
+        self._json({"guest": True, "id": "guest:" + visitor, "display_name": "訪客", "is_guest": True,
+                    "is_admin": False, "general_audience": True}, cookies=[guest.cookie(token, bool(settings.cloud_mode))])
+
+    def _guest_get(self, parsed: Any) -> None:
+        validate_query(parsed)
+        visitor = guest.identity(cookie_value(self.headers.get("Cookie"), guest.COOKIE))
+        if not visitor:
+            self._json({"error": "訪客識別已過期", "guest_expired": True}, HTTPStatus.UNAUTHORIZED)
+            return
+        path = parsed.path.removeprefix("/api/guest/")
+        bucket = category("/api/" + path, "GET")
+        if path == "book-batch":
+            bucket = "browse"
+        if not self._rate_check(f"guest:{visitor}:{bucket}", bucket):
+            return
+        query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+        self._json(guest.public_get(path, query))
+
     def _require_admin(self, user: dict[str, Any]) -> bool:
         if user.get("role") != "admin":
             self._json({"error": "Administrator permission required"}, HTTPStatus.FORBIDDEN)
@@ -834,7 +901,8 @@ class Handler(BaseHTTPRequestHandler):
         if not raw_length.isascii() or not raw_length.isdigit():
             raise RequestError("無效的請求長度")
         length = int(raw_length)
-        maximum = 1_000_000 if urlparse(self.path).path == "/api/catalog-sync/books" else 65_536
+        large_body = {"/api/catalog-sync/books", "/api/guest-import/preview", "/api/guest-import/apply"}
+        maximum = 1_000_000 if urlparse(self.path).path in large_body else 65_536
         if length > maximum:
             raise RequestError("請求內容過大", 413)
         if not length:

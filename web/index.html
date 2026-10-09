@@ -15,6 +15,8 @@
         <h1>登入你的收藏書架</h1>
         <p>使用 Google 帳號登入；AniShelf 不會取得或保存你的 Google 密碼。</p>
         <a class="google-login" id="googleLogin" href="/auth/google">使用 Google 登入</a>
+        <button class="secondary guest-entry" id="guestLogin" type="button">不用註冊，以訪客身分使用</button>
+        <small>訪客書架只保存在這個瀏覽器，不跨裝置同步。清除網站資料或關閉無痕視窗會遺失，請定期備份。</small>
         <small class="hidden" id="loginUnavailable">站長尚未完成 Google 登入設定。</small>
       </div>
     </section>
@@ -66,6 +68,7 @@
             <img id="accountAvatar" alt="" />
             <span><strong id="accountName"></strong><small id="accountRole"></small></span>
             <button class="text-button" id="logoutButton">登出</button>
+            <a class="text-button hidden" id="guestGoogleLogin" href="/auth/google">Google 登入</a>
           </div>
         </header>
 
@@ -222,6 +225,7 @@
         </section>
 
         <section class="content-card view-section hidden" id="notificationsView">
+          <div class="guest-note hidden" id="guestNotificationNote"><h3>登入帳號才能收到電子郵件</h3><p>訪客可以收藏與追蹤書籍，但不會啟用雲端寄信。登入後可選擇匯入訪客書架。</p><a href="/auth/google" class="secondary button-link guest-google">使用 Google 登入</a></div>
           <div class="section-heading">
             <div><p class="eyebrow">NOTIFICATION SETTINGS</p><h2>通知設定</h2></div>
             <p>每個帳號各自設定；Discord 系統通知仍只有管理員會收到。</p>
@@ -305,6 +309,13 @@
             <p class="preference-warning">一般向也適用書籍通知。既有藏書、訂選與追蹤紀錄不會被刪除；取消一般向可查看隱藏書目。私人手動藏書僅自己可見，尚未經分級審核；備份不受篩選限制。</p>
             <button class="primary" type="submit">儲存偏好設定</button>
           </form>
+          <section class="guest-storage" aria-label="瀏覽器訪客書架">
+            <p class="eyebrow">BROWSER SHELF</p><h3>這個瀏覽器的訪客書架</h3>
+            <p>訪客的訂選、藏書與筆記使用 IndexedDB 保存在此瀏覽器；Cookie 只保存訪客識別。不同裝置不會同步，共用瀏覽器的人也可能看見資料。</p>
+            <p>清除網站資料、無痕模式或更換瀏覽器可能造成遺失。備份包含筆記與訂單資訊，請自行妥善保管。還原只新增缺少的記錄，不覆蓋現有資料。</p>
+            <div class="form-actions"><button class="secondary" id="guestBackup" type="button">備份訪客書架</button><button class="secondary" id="guestRestore" type="button">還原訪客備份</button><button class="secondary hidden" id="guestImport" type="button">匯入訪客書架到帳號</button><button class="secondary hidden" id="guestSwitch" type="button">切換到訪客書架</button></div>
+            <input class="hidden" id="guestBackupFile" type="file" accept="application/json,.json" aria-label="選擇訪客備份檔">
+          </section>
         </section>
         <section class="content-card view-section hidden" id="qualityView">
           <div class="section-heading">
@@ -361,7 +372,10 @@
     </dialog>
 
     <div class="toast hidden" id="toast" role="status"></div>
+    <dialog id="guestImportDialog" class="prompt-dialog" aria-labelledby="guestImportTitle"><div class="prompt-content" id="guestImportContent"></div></dialog>
     <script src="/home.js" defer></script>
+    <script src="/guest.js" defer></script>
+    <script src="/guest-ui.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
