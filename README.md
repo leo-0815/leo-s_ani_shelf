@@ -62,6 +62,16 @@ Library、已訂選、我的藏書與系列書架上方可同時勾選任意多�
 
 # AniShelf
 
+## 首頁導航（PR #40）
+
+Google 登入後預設進入「我的書架首頁」，點左上角 AniShelf 或側欄首頁可返回。
+首頁提供找書、系列、上市日程、訂選、藏書與推薦入口，並顯示目前帳號的書架摘要。
+關注書目最多顯示六本、依台北日期整理未來七天的明確日級日期；不代表實際庫存或出貨。
+首頁沿用一般向偏好，不預先載入 Library 百本書目；摘要失敗仍可使用功能入口並重試。
+既有 `#library` 等直接連結與瀏覽器返回／前進仍可使用。本機版同樣提供首頁，不新增登入要求。
+
+接續安排：PR #41 防濫用與安全保護，PR #42 不需註冊的訪客模式；尚未開放匿名 API。
+
 ## Local-to-cloud catalog sync
 
 The machine-to-machine API transfers only publisher and book metadata. Personal account data,
