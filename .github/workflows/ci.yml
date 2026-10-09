@@ -25,3 +25,4 @@ jobs:
       - run: node --check web/home.js
       - run: node scripts/test_home_ui.cjs
       - run: node scripts/test_release_display.cjs
+      - run: node scripts/test_api_guards.cjs

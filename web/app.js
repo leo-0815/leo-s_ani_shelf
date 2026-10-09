@@ -46,19 +46,58 @@ function syncBookPageSize() {
   return true;
 }
 
-async function api(path, options = {}) {
+const apiInflight = new Map();
+const apiCooldowns = new Map();
+
+function apiBucket(path, method) {
+  if (path.startsWith("/api/auth/")) return "auth";
+  if (path.startsWith("/api/notifications/test-")) return "notification-test";
+  if (path === "/api/update") return "update";
+  if (path.startsWith("/api/export.") || path.startsWith("/api/calendar.ics")) return "export";
+  if (method !== "GET") return "write";
+  if (path.includes("recommendations")) return "recommendations";
+  if (/^\/api\/(books|series|upcoming)(\/|\?|$)/.test(path)) return "browse";
+  return "metadata";
+}
+
+function api(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const owner = state.user?.id || "anonymous";
+  const bucketKey = `${owner}:${apiBucket(path, method)}`;
+  const remaining = Math.ceil(((apiCooldowns.get(bucketKey) || 0) - Date.now()) / 1000);
+  if (remaining > 0) return Promise.reject(new Error(`操作較頻繁，請等待 ${remaining} 秒後再試`));
+  apiCooldowns.delete(bucketKey);
+  const key = `${owner}:${path}`;
+  if (method === "GET" && apiInflight.has(key)) return apiInflight.get(key);
+  const request = apiRequest(path, {...options, method}, owner);
+  if (method === "GET") {
+    apiInflight.set(key, request);
+    request.then(() => apiInflight.delete(key), () => apiInflight.delete(key));
+  }
+  return request;
+}
+
+async function apiRequest(path, options, owner) {
   const headers = {"Content-Type": "application/json", ...(options.headers || {})};
   if (state.csrfToken && options.method && options.method !== "GET") {
     headers["X-CSRF-Token"] = state.csrfToken;
   }
   const response = await fetch(path, {...options, headers});
   const data = await response.json().catch(() => ({}));
+  if (response.status === 429) {
+    const seconds = Math.max(1, Number(response.headers.get("Retry-After") || data.retry_after) || 60);
+    const bucket = data.rate_limit_bucket || apiBucket(path, options.method);
+    apiCooldowns.set(`${owner}:${bucket}`, Date.now() + seconds * 1000);
+    throw new Error(`操作較頻繁，請等待 ${seconds} 秒後再試`);
+  }
   if (response.status === 401 && path !== "/api/auth/me") showLogin();
   if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
   return data;
 }
 
 function showLogin() {
+  apiInflight.clear();
+  apiCooldowns.clear();
   state.ready = false;
   state.catalogPromise = null;
   window.AniShelfHome.reset();
@@ -968,7 +1007,10 @@ async function startUpdate() {
 
 function pollJob(jobId) {
   clearInterval(state.jobTimer);
+  let polling = false;
   state.jobTimer = setInterval(async () => {
+    if (polling) return;
+    polling = true;
     try {
       const job = await api(`/api/jobs/${jobId}`);
       if (["completed", "partial", "failed"].includes(job.status)) {
@@ -987,8 +1029,10 @@ function pollJob(jobId) {
       clearInterval(state.jobTimer);
       state.jobTimer = null;
       toast(error.message, true);
+    } finally {
+      polling = false;
     }
-  }, 1200);
+  }, 6000);
 }
 
 async function loadLatestJob() {
