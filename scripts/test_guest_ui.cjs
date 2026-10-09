@@ -1,4 +1,9 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const entryHtml=fs.readFileSync(path.join(__dirname,'..','web','index.html'),'utf8');
+assert.match(entryHtml,/id="guestLogin"[^>]*aria-describedby="guestStorageWarning"/);
+assert.match(entryHtml,/id="guestStorageWarning" role="note"/);
+assert.match(entryHtml,/Cookie 僅保存訪客識別/);
+assert.match(entryHtml,/IndexedDB/);
 const nodes=new Map(),calls=[],saved={version:1,wishlist:{1:{notes:'private'}},collection:{},custom:{},follows:[],decisions:{}};
 function element(id){return {disabled:false,textContent:'',innerHTML:'',events:{},open:false,addEventListener(e,f){this.events[e]=f},showModal(){this.open=true},close(){this.open=false},cloneNode(){return Object.assign(element(id),{textContent:this.textContent,disabled:this.disabled})},replaceWith(other){nodes.set(id,other)}};}
 const $=id=>{if(!nodes.has(id))nodes.set(id,element(id));return nodes.get(id);};

@@ -511,6 +511,8 @@ dialog::backdrop { background: rgba(32,29,34,.56); backdrop-filter: blur(3px); }
 }
 /* Browser-only visitor shelf controls, using the existing warm card palette. */
 .guest-entry { display: block; width: 100%; margin: 14px 0; }
+.login-card .guest-entry-warning { padding: 14px 16px; margin: 0 0 16px; border: 1px solid #f3c8bd; border-radius: 12px; background: #fff8f3; color: #746c67; font-size: 13px; line-height: 1.8; text-align: left; }
+.guest-entry-warning strong { color: #ac4939; }
 .login-card small { display: block; line-height: 1.7; color: #746c67; }
 .guest-storage { border-top: 1px solid #e9e1dc; margin-top: 24px; padding: 28px 32px; }
 .guest-storage p, .guest-note p { max-width: 760px; color: #746c67; line-height: 1.8; }
