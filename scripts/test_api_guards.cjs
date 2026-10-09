@@ -14,8 +14,8 @@ const vm = require("node:vm");
     fetch: async (url, options) => {
       count++;
       assert.equal(options.headers["Content-Type"], "application/json");
-      if (fail) return {status: 429, ok: false, headers: {get: () => "60"},
-        json: async () => ({rate_limit_bucket: "browse", retry_after: 60})};
+      if (fail) return {status: fail.status || 429, ok: false, headers: {get: () => String(fail.retry || 60)},
+        json: async () => ({rate_limit_bucket: fail.bucket || "browse", retry_after: fail.retry || 60, read_protection: Boolean(fail.resource)})};
       await new Promise(resolve => release = resolve);
       return {status: 200, ok: true, json: async () => ({url})};
     },
@@ -42,6 +42,21 @@ const vm = require("node:vm");
   ctx.state.user.id = 1; now = 60000;
   const resumed = ctx.api("/api/books");
   release(); await resumed;
+  fail = {status:503,bucket:'read-overload',retry:2,resource:true};
+  await assert.rejects(ctx.api('/api/stats'), /2 秒/);
+  const overloadedCount=count;
+  await assert.rejects(ctx.api('/api/guest/books/2/recommendations'), /2 秒/);
+  assert.equal(count,overloadedCount,'read protection spans public query categories');
+  fail=false;
+  const write=ctx.api('/api/preferences',{method:'POST',body:'{}'});release();await write;
+  const metrics=ctx.api('/api/resource-guards');release();await metrics;
+  now=62000;
+  const recovered=ctx.api('/api/books');release();await recovered;
+  fail={bucket:'read-budget',retry:30,resource:true};
+  await assert.rejects(ctx.api('/api/books'),/30 秒/);
+  const budgetCount=count;
+  await assert.rejects(ctx.api('/api/recommendations'),/30 秒/);
+  assert.equal(count,budgetCount);
   assert.match(source, /}, 6000\)/);
   assert.match(source, /if \(polling\) return/);
   console.log("API deduplication, cooldown, account isolation and polling tests OK");

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from app.abuse import RequestError, SlidingWindow, category, csv_cell, session_identity, validate_query
 from app.auth import SESSION_COOKIE
 from app.server import Handler
+from app.resource_guards import ResourceGuard
 
 
 class LimiterTests(unittest.TestCase):
@@ -73,6 +74,7 @@ class GuardHTTPTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.now = [0.0]
+        self.stack.enter_context(patch('app.server.RESOURCES', ResourceGuard(clock=lambda:self.now[0])))
         self.stack.enter_context(patch("app.server.LIMITER", SlidingWindow(clock=lambda: self.now[0])))
         self.auth = self.stack.enter_context(patch("app.server.current_user", side_effect=self.user))
         self.books = self.stack.enter_context(patch("app.server.list_books", return_value={"items": [], "total": 0}))
