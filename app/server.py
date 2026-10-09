@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .abuse import LIMITER, RequestError, category, csv_cell, session_identity, validate_query
 from . import guest
+from .resource_guards import RESOURCES, ReadDenied, protected_read
 
 from .auth import (
     AuthenticationError,
@@ -247,7 +248,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             user = self._require_user()
             if user and self._guard_request(parsed, "GET", user):
-                self._authenticated_get(parsed, user)
+                if protected_read(parsed.path):
+                    query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+                    admin_only = parsed.path in {"/api/quality", "/api/release-checks"} or (
+                        parsed.path.startswith("/api/export.") and query.get("wishlist") != "1" and query.get("collection") != "1")
+                    if admin_only and not self._require_admin(user):
+                        return
+                    with RESOURCES.read(f"user:{user['id']}", parsed.path, query):
+                        self._authenticated_get(parsed, user)
+                else:
+                    self._authenticated_get(parsed, user)
+        except ReadDenied as exc:
+            self._read_denied(exc)
         except RequestError as exc:
             self.close_connection = True
             self._json({"error": str(exc)}, exc.status)
@@ -268,7 +280,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _visible_authenticated_get(self, parsed: Any, user: dict[str, Any]) -> None:
         user_id = int(user["id"])
-        if parsed.path == "/api/preferences":
+        if parsed.path == "/api/resource-guards":
+            if self._require_admin(user):
+                self._json(RESOURCES.snapshot())
+        elif parsed.path == "/api/preferences":
             self._json({"general_audience": bool(user.get("general_audience"))})
         elif parsed.path == "/api/books":
             query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
@@ -475,7 +490,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not visitor:
                     self._json({"error": "訪客識別已過期", "guest_expired": True}, HTTPStatus.UNAUTHORIZED)
                 elif self._rate_check(f"guest:{visitor}:browse", "browse"):
-                    self._json(guest.resolve_series(self._body()))
+                    payload = self._body()
+                    with RESOURCES.read(f"guest:{visitor}", parsed.path, {}, payload):
+                        self._json(guest.resolve_series(payload))
                 return
             if parsed.path.startswith("/api/guest/"):
                 self._json({"error": "訪客私人資料只能保存在瀏覽器"}, HTTPStatus.FORBIDDEN)
@@ -484,10 +501,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._require_catalog_sync():
                     return
                 payload = self._body()
+                result = ingest_catalog_books(payload.get("items"))
+                RESOURCES.invalidate()
                 self._json(
                     {
                         "protocol_version": PROTOCOL_VERSION,
-                        **ingest_catalog_books(payload.get("items")),
+                        **result,
                     },
                     HTTPStatus.ACCEPTED,
                 )
@@ -588,6 +607,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             else:
                 self._json({"error": "API not found"}, HTTPStatus.NOT_FOUND)
+        except ReadDenied as exc:
+            self._read_denied(exc)
         except RequestError as exc:
             self.close_connection = True
             self._json({"error": str(exc)}, exc.status)
@@ -748,7 +769,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self._rate_check(f"guest:{visitor}:{bucket}", bucket):
             return
         query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
-        self._json(guest.public_get(path, query))
+        self._json(RESOURCES.public(f"guest:{visitor}", path, query,
+                                   lambda: guest.public_get(path, query)))
+
+    def _read_denied(self, exc: ReadDenied) -> None:
+        self._retry_after = exc.retry_after
+        self.close_connection = True
+        self._json({"error": str(exc), "retry_after": exc.retry_after,
+                    "rate_limit_bucket": "read-budget" if exc.status == 429 else "read-overload",
+                    "read_protection": True}, exc.status)
 
     def _require_admin(self, user: dict[str, Any]) -> bool:
         if user.get("role") != "admin":

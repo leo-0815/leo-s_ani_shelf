@@ -49,6 +49,16 @@ function syncBookPageSize() {
 const apiInflight = new Map();
 const apiCooldowns = new Map();
 
+function resourceReadPath(path) {
+  return /^\/api\/(books|series|book-batch|resolve|upcoming|recommendations|home|stats|publishers|quality|release-checks|export\.(json|csv)|calendar\.ics)(\/|\?|$)/.test(path.replace('/api/guest/', '/api/'));
+}
+
+function readCooldown(owner, path) {
+  if (!resourceReadPath(path)) return 0;
+  return Math.max(0, ...['read-budget', 'read-overload'].map(bucket =>
+    Math.ceil(((apiCooldowns.get(`${owner}:${bucket}`) || 0) - Date.now()) / 1000)));
+}
+
 function apiBucket(path, method) {
   if (path.startsWith("/api/auth/")) return "auth";
   if (path.startsWith("/api/notifications/test-")) return "notification-test";
@@ -64,7 +74,7 @@ function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const owner = state.user?.id || "anonymous";
   const bucketKey = `${owner}:${apiBucket(path, method)}`;
-  const remaining = Math.ceil(((apiCooldowns.get(bucketKey) || 0) - Date.now()) / 1000);
+  const remaining = Math.max(readCooldown(owner, path), Math.ceil(((apiCooldowns.get(bucketKey) || 0) - Date.now()) / 1000));
   if (remaining > 0) return Promise.reject(new Error(`操作較頻繁，請等待 ${remaining} 秒後再試`));
   apiCooldowns.delete(bucketKey);
   const key = `${owner}:${path}`;
@@ -78,6 +88,8 @@ function api(path, options = {}) {
 }
 
 async function apiRequest(path, options, owner) {
+  const remaining = readCooldown(owner, path);
+  if (remaining > 0) throw new Error(`查詢暫時需等待 ${remaining} 秒後再試；已儲存資料不受影響`);
   if (state.user?.is_guest && !path.startsWith("/api/guest/")) {
     return window.AniShelfGuest.api(path, options, (p, o = {}) => apiRequest(p, {method:"GET", ...o}, owner));
   }
@@ -87,11 +99,11 @@ async function apiRequest(path, options, owner) {
   }
   const response = await fetch(path, {...options, headers});
   const data = await response.json().catch(() => ({}));
-  if (response.status === 429) {
+  if (response.status === 429 || (response.status === 503 && data.read_protection)) {
     const seconds = Math.max(1, Number(response.headers.get("Retry-After") || data.retry_after) || 60);
     const bucket = data.rate_limit_bucket || apiBucket(path, options.method);
     apiCooldowns.set(`${owner}:${bucket}`, Date.now() + seconds * 1000);
-    throw new Error(`操作較頻繁，請等待 ${seconds} 秒後再試`);
+    throw new Error(`${data.error || '操作較頻繁'}，請等待 ${seconds} 秒後再試`);
   }
   if (response.status === 401 && path !== "/api/auth/me" && !data.guest_expired) showLogin();
   if (!response.ok) {
@@ -988,6 +1000,7 @@ async function saveNotificationPreferences(event) {
 
 async function loadQuality() {
   loadReleaseChecks();
+  loadResourceGuards();
   const data = await api("/api/quality");
   const coverage = $("#ratingCoverageSummary");
   if (coverage) coverage.innerHTML = '<p class="source-note">涵蓋全部出版社書目，不受瀏覽偏好限制。一般向只排除已確認 BL／R18；未知或缺少普遍級證據不再隱藏。本機與每日補查逐步補齊分類。</p><div class="release-check-grid">' +
@@ -1005,6 +1018,21 @@ async function loadQuality() {
     state.missingFilter = map[button.dataset.qualityFilter];
     switchView("library");
   }));
+}
+
+async function loadResourceGuards() {
+  const node = $('#resourceGuardSummary');
+  if (!node) return;
+  try {
+    const data = await api('/api/resource-guards');
+    node.innerHTML = '<p class="source-note">自本次服務啟動起的累積值；重啟會重設。沒有背景輪詢，不代表供應商剩餘免費額度。</p><div class="release-check-grid">' +
+      [ ['公共快取命中／未命中', `${data.cache_hits} / ${data.cache_misses}`],
+        ['成本額度拒絕', data.budget_denied], ['繁忙／全站額度拒絕', `${data.capacity_denied} / ${data.global_denied}`],
+        ['保護中／合併重複查詢', `${data.circuit_denied} / ${data.coalesced}`],
+        ['執行／等待中的查詢', `${data.active_reads} / ${data.queued_reads}`],
+        ['慢查詢／連線失敗', `${data.slow_reads} / ${data.failed_reads}`] ].map(([title, value]) =>
+        `<article class="quality-card"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(title)}</span></article>`).join('') + '</div>';
+  } catch (error) { node.textContent = error.message; }
 }
 
 function renderSources() {

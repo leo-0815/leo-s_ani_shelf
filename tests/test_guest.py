@@ -12,6 +12,7 @@ from app import guest, guest_import
 from app.abuse import SlidingWindow, RequestError
 from app.auth import SESSION_COOKIE
 from app.server import Handler
+from app.resource_guards import ResourceGuard
 
 
 class GuestIdentityTests(unittest.TestCase):
@@ -74,6 +75,7 @@ class GuestHTTPTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.now = [0.0]
+        self.stack.enter_context(patch('app.server.RESOURCES', ResourceGuard(clock=lambda:self.now[0])))
         self.stack.enter_context(patch('app.server.LIMITER', SlidingWindow(clock=lambda:self.now[0])))
         self.auth = self.stack.enter_context(patch('app.server.current_user', return_value=None))
         self.public = self.stack.enter_context(patch('app.guest.public_get', return_value={'items': []}))
