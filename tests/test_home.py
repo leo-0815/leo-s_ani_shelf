@@ -124,6 +124,7 @@ class HomeRouteTests(unittest.TestCase):
     def test_anonymous_cannot_read_home(self, snapshot):
         handler = object.__new__(Handler)
         handler.path = "/api/home"
+        handler.headers = {}
         handler._require_user = lambda: None
         handler.do_GET()
         snapshot.assert_not_called()

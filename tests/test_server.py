@@ -53,6 +53,12 @@ class ServerInstanceTests(unittest.TestCase):
 
 
 class ServerAuthorizationTests(unittest.TestCase):
+    def setUp(self):
+        from app.abuse import SlidingWindow
+        patcher = patch("app.server.LIMITER", SlidingWindow())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_release_check_summary_is_admin_only(self):
         from urllib.parse import urlparse
         handler = self.handler()

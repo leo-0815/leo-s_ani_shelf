@@ -5,9 +5,16 @@ from app.server import Handler
 
 
 class CollectionRouteTests(unittest.TestCase):
+    def setUp(self):
+        from app.abuse import SlidingWindow
+        patcher = patch("app.server.LIMITER", SlidingWindow())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def handler(self,path):
         h=object.__new__(Handler)
         h.path=path
+        h.headers={}
         h._json=MagicMock()
         h._require_user=lambda:{"id":42}
         h._require_csrf=lambda user:True

@@ -14,6 +14,8 @@ from time import monotonic
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .abuse import LIMITER, RequestError, category, csv_cell, session_identity, validate_query
+
 from .auth import (
     AuthenticationError,
     OAUTH_STATE_COOKIE,
@@ -154,17 +156,75 @@ def _release_instance_lock() -> None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "AniShelf/0.1"
 
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(15)
+
+    def version_string(self) -> str:
+        return self.server_version
+
+    def end_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; "
+                         "style-src 'self'; img-src 'self' https: http: data:; "
+                         "connect-src 'self'; object-src 'none'; base-uri 'none'; "
+                         "frame-ancestors 'none'; form-action 'self'")
+        if getattr(self, "_retry_after", 0):
+            self.send_header("Retry-After", str(self._retry_after))
+        super().end_headers()
+
+    def _rate_check(self, key: str, bucket: str, limit: int = 20, seconds: int = 60) -> bool:
+        retry = LIMITER.check(key, limit, seconds)
+        if not retry:
+            return True
+        self._retry_after = retry
+        self.close_connection = True
+        self._json({"error": f"操作較頻繁，請等待 {retry} 秒後再試", "retry_after": retry,
+                    "rate_limit_bucket": bucket}, HTTPStatus.TOO_MANY_REQUESTS)
+        return False
+
+    def _guard_request(self, parsed: Any, method: str, user: dict | None = None) -> bool:
+        bucket = category(parsed.path, method)
+        if user is not None:
+            return self._rate_check(f"user:{user['id']}:{bucket}", bucket)
+        validate_query(parsed)
+        token = cookie_value(self.headers.get("Cookie"), SESSION_COOKIE) or ""
+        if parsed.path.startswith("/auth/"):
+            # Login initiation creates DB state before an account exists; do not
+            # let an attacker reset this quota by inventing session cookies.
+            token = ""
+        peer = str(getattr(self, "client_address", ("unknown",))[0])
+        identity = session_identity(token, peer)
+        return self._rate_check(f"pre:{identity}:{bucket}", bucket)
+
+    def _server_failure(self, status: HTTPStatus = HTTPStatus.INTERNAL_SERVER_ERROR) -> None:
+        # Never return SQL, credentials, SMTP replies or upstream response bodies.
+        import sys
+        kind = sys.exc_info()[0]
+        print(f"Request failed: {self.path.partition('?')[0][:512]} {kind.__name__ if kind else 'Unavailable'}")
+        self._json({"error": "服務暫時無法完成請求，請稍後再試"}, status)
+
     def do_GET(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
         try:
+            parsed = urlparse(self.path)
             if parsed.path == "/api/health":
                 self._health()
                 return
+            if (parsed.path.startswith("/api/") and not parsed.path.startswith("/api/catalog-sync/")) or parsed.path.startswith("/auth/"):
+                if not self._guard_request(parsed, "GET"):
+                    return
             if parsed.path == "/api/auth/config":
                 self._json({"google_enabled": get_settings().auth_configured})
                 return
             if parsed.path == "/api/auth/me":
+                if not self._rate_check("auth-lookup-budget", "auth", 400):
+                    return
                 user = current_user(self.headers.get("Cookie"))
+                if user and not self._guard_request(parsed, "GET", user):
+                    return
                 self._json({"authenticated": bool(user), "user": user})
                 return
             if parsed.path.startswith("/api/catalog-sync/"):
@@ -181,16 +241,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._static(parsed.path)
                 return
             user = self._require_user()
-            if user:
+            if user and self._guard_request(parsed, "GET", user):
                 self._authenticated_get(parsed, user)
+        except RequestError as exc:
+            self.close_connection = True
+            self._json({"error": str(exc)}, exc.status)
         except AuthenticationError as exc:
-            self._json({"error": str(exc)}, HTTPStatus.UNAUTHORIZED)
+            self._json({"error": "登入驗證失敗，請重新登入"}, HTTPStatus.UNAUTHORIZED)
         except (DatabaseUnavailable, OSError) as exc:
-            self._json({"error": str(exc), "setup_required": True}, HTTPStatus.SERVICE_UNAVAILABLE)
+            self._server_failure(HTTPStatus.SERVICE_UNAVAILABLE)
         except (ValueError, KeyError) as exc:
             self._json({"error": str(exc).strip("'")}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
-            self._json({"error": f"Server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._server_failure()
 
     def _authenticated_get(self, parsed: Any, user: dict[str, Any]) -> None:
         # Backups retain hidden records; browsing uses the account preference.
@@ -394,8 +457,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"系統錯誤：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_POST(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
         try:
+            parsed = urlparse(self.path)
             if parsed.path == "/api/catalog-sync/books":
                 if not self._require_catalog_sync():
                     return
@@ -408,8 +471,12 @@ class Handler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                 )
                 return
+            if not self._guard_request(parsed, "POST"):
+                return
             user = self._require_user()
             if not user or not self._require_csrf(user):
+                return
+            if not self._guard_request(parsed, "POST", user):
                 return
             if parsed.path == "/api/auth/logout":
                 logout(self.headers.get("Cookie"))
@@ -443,6 +510,8 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/notification-preferences":
                 self._json(set_notification_preferences(user_id, payload))
             elif parsed.path == "/api/notifications/test-email":
+                if not self._rate_check(f"email-test:{user_id}", "notification-test", 1):
+                    return
                 settings = get_settings()
                 if settings.email_test_mode == "github_actions":
                     result = dispatch_test_email_workflow(
@@ -459,6 +528,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({**result, "message": message})
             elif parsed.path == "/api/notifications/test-discord":
                 if not self._require_admin(user):
+                    return
+                if not self._rate_check("discord-test-global", "notification-test", 1):
                     return
                 settings = get_settings()
                 result = send_test_discord(
@@ -491,14 +562,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             else:
                 self._json({"error": "API not found"}, HTTPStatus.NOT_FOUND)
+        except RequestError as exc:
+            self.close_connection = True
+            self._json({"error": str(exc)}, exc.status)
         except (DatabaseUnavailable, OSError) as exc:
-            self._json({"error": str(exc), "setup_required": True}, HTTPStatus.SERVICE_UNAVAILABLE)
+            self._server_failure(HTTPStatus.SERVICE_UNAVAILABLE)
         except (ValueError, KeyError) as exc:
             self._json({"error": str(exc).strip("'")}, HTTPStatus.BAD_REQUEST)
         except NotificationError as exc:
-            self._json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+            self._json({"error": "通知暫時無法寄送，請稍後再試"}, HTTPStatus.BAD_GATEWAY)
         except Exception as exc:
-            self._json({"error": f"Server error: {exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._server_failure()
 
     def _legacy_do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -550,10 +624,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"系統錯誤：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def do_DELETE(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
         try:
+            parsed = urlparse(self.path)
+            if not self._guard_request(parsed, "DELETE"):
+                return
             user = self._require_user()
             if not user or not self._require_csrf(user):
+                return
+            if not self._guard_request(parsed, "DELETE", user):
                 return
             user_id = int(user["id"])
             if parsed.path == "/api/recommendations/dismissals":
@@ -571,8 +649,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             delete_wishlist(user_id, int(match.group(1)))
             self._json({"ok": True})
-        except Exception as exc:
-            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except RequestError as exc:
+            self.close_connection = True
+            self._json({"error": str(exc)}, exc.status)
+        except (ValueError, KeyError) as exc:
+            self._json({"error": str(exc).strip("'")}, HTTPStatus.BAD_REQUEST)
+        except Exception:
+            self._server_failure()
 
     def _legacy_do_DELETE(self) -> None:
         parsed = urlparse(self.path)
@@ -591,6 +674,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
     def _require_user(self) -> dict[str, Any] | None:
+        # A global safety fuse bounds auth DB work even if invalid cookies rotate.
+        # It is not a replacement for the per-account 20/min category limits.
+        if not self._rate_check("auth-lookup-budget", "auth", 400):
+            return None
         user = current_user(self.headers.get("Cookie"))
         if not user:
             self._json({"error": "Authentication required"}, HTTPStatus.UNAUTHORIZED)
@@ -622,6 +709,9 @@ class Handler(BaseHTTPRequestHandler):
         prefix = "Bearer "
         supplied = authorization[len(prefix) :] if authorization.startswith(prefix) else ""
         if not supplied or not secrets.compare_digest(settings.catalog_sync_token, supplied):
+            peer = str(getattr(self, "client_address", ("unknown",))[0])
+            if not self._rate_check(f"bad-sync:{peer}", "auth"):
+                return False
             self._json({"error": "Invalid catalog sync token"}, HTTPStatus.UNAUTHORIZED)
             return False
         return True
@@ -712,7 +802,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "configured": True, **info})
         else:
             self._json(
-                {"ok": False, "configured": True, **info},
+                {"ok": False, "configured": True, "message": "資料庫暫時無法連線"},
                 HTTPStatus.SERVICE_UNAVAILABLE,
             )
 
@@ -735,10 +825,29 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def _body(self) -> dict[str, Any]:
-        length = min(int(self.headers.get("Content-Length", "0")), 1_000_000)
+        if self.headers.get("Transfer-Encoding"):
+            raise RequestError("不支援的請求編碼")
+        lengths = self.headers.get_all("Content-Length") if hasattr(self.headers, "get_all") else [self.headers.get("Content-Length", "0")]
+        if lengths and len(lengths) > 1:
+            raise RequestError("重複的請求長度")
+        raw_length = self.headers.get("Content-Length", "0")
+        if not raw_length.isascii() or not raw_length.isdigit():
+            raise RequestError("無效的請求長度")
+        length = int(raw_length)
+        maximum = 1_000_000 if urlparse(self.path).path == "/api/catalog-sync/books" else 65_536
+        if length > maximum:
+            raise RequestError("請求內容過大", 413)
         if not length:
             return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise RequestError("請使用 JSON 格式", 415)
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeError, RecursionError):
+            raise RequestError("無效的 JSON 內容") from None
+        if not isinstance(payload, dict):
+            raise RequestError("JSON 內容必須為物件")
+        return payload
 
     def _json(
         self,
@@ -796,7 +905,7 @@ class Handler(BaseHTTPRequestHandler):
         ]
         writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(data["items"])
+        writer.writerows({key: csv_cell(value) for key, value in item.items()} for item in data["items"])
         self._download(
             ("\ufeff" + output.getvalue()).encode("utf-8"),
             "text/csv; charset=utf-8",
@@ -834,7 +943,9 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def log_message(self, format: str, *args: Any) -> None:
-        print(f"[{self.log_date_time_string()}] {self.address_string()} {format % args}")
+        # OAuth callback query strings contain one-time credentials. Never log them.
+        print(f"[{self.log_date_time_string()}] {getattr(self, 'command', '?')} "
+              f"{getattr(self, 'path', '').partition('?')[0][:512]} {args[1] if len(args) > 1 else ''}")
 
 
 def main() -> None:
