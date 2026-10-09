@@ -28,6 +28,7 @@ from .auth import (
     session_cookie,
 )
 from .collection import set_owned, remove_owned, save_custom, get_custom
+from .home import home_snapshot
 from .preferences import get_preferences, set_preferences, visibility_scope, publisher_visible
 from .config import ROOT, get_settings
 from .catalog_sync import PROTOCOL_VERSION, ingest_catalog_books
@@ -266,6 +267,8 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/calendar.ics":
             query = parse_qs(parsed.query)
             self._export_calendar(user_id, int(query.get("days", ["90"])[0]))
+        elif parsed.path == "/api/home":
+            self._json(home_snapshot(user_id))
         elif parsed.path == "/api/stats":
             self._json(stats(user_id))
         elif parsed.path == "/api/notification-preferences":

@@ -1,7 +1,9 @@
 const state = {
   user: null,
   csrfToken: "",
-  view: "library",
+  view: "home",
+  ready: false,
+  catalogPromise: null,
   books: [],
   series: [],
   recommendations: [],
@@ -57,6 +59,9 @@ async function api(path, options = {}) {
 }
 
 function showLogin() {
+  state.ready = false;
+  state.catalogPromise = null;
+  window.AniShelfHome.reset();
   state.user = null;
   state.csrfToken = "";
   $("#loginGate").classList.remove("hidden");
@@ -153,11 +158,12 @@ async function loadAll() {
   try {
     state.generalAudience = Boolean(state.user.general_audience);
     $("#generalAudience").checked = state.generalAudience;
-    await Promise.all([loadPublishers(), loadStats(), loadBooks()]);
+    state.ready = true;
+    await switchView(location.hash.slice(1) || "home", true);
     $("#healthDot").className = "health-dot ok";
     $("#healthText").textContent = "TiDB 已連接";
     $("#setupBanner").classList.add("hidden");
-    if (state.user.is_admin) await loadLatestJob();
+    if (state.user.is_admin) loadLatestJob().catch(error => toast(error.message, true));
     return true;
   } catch (error) {
     $("#healthDot").className = "health-dot bad";
@@ -1006,19 +1012,23 @@ function clearFilters(reload = true) {
   if (reload) reloadFilteredView();
 }
 
-function switchView(view) {
-  const availableViews = ["library", "wishlist", "collection", "series", "upcoming", "recommendations", "notifications", "preferences", "quality", "sources"];
-  if (!availableViews.includes(view)) view = "library";
-  if (!state.user?.is_admin && ["quality", "sources"].includes(view)) view = "library";
+async function switchView(view, replace = false) {
+  const availableViews = ["home", "library", "wishlist", "collection", "series", "upcoming", "recommendations", "notifications", "preferences", "quality", "sources"];
+  if (!availableViews.includes(view)) view = "home";
+  if (!state.user?.is_admin && ["quality", "sources"].includes(view)) view = "home";
+  clearTimeout(searchTimer);
   state.view = view;
-  if (location.hash !== `#${view}`) history.replaceState(null, "", `#${view}`);
+  if (location.hash !== `#${view}`) history[replace ? "replaceState" : "pushState"](null, "", `#${view}`);
   $$(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.view === view));
   $$(".view-section").forEach(section => section.classList.add("hidden"));
   const libraryMode = ["library", "wishlist", "collection"].includes(view);
+  $("#catalogStats").classList.toggle("hidden", view === "home");
+  $(".top-actions").classList.toggle("hidden", view === "home");
   $("#catalogFilterBar").classList.toggle("hidden", !libraryMode && view !== "series");
   $("#publisherFilter").open = false;
   $(`#${libraryMode ? "library" : view}View`).classList.remove("hidden");
   const titles = {
+    home: ["YOUR READING SPACE", "我的書架首頁"],
     library: ["ALL CATALOG", "Library"], wishlist: ["WISHLIST", "已訂選清單"],
     collection: ["OWNED BOOKS", "我的藏書"],
     series: ["SERIES SHELF", "系列書架"], upcoming: ["RELEASE CALENDAR", "近期上市"],
@@ -1035,13 +1045,20 @@ function switchView(view) {
   $("#collectionSummary").classList.toggle("hidden", view !== "collection");
   if (view !== "collection" && $("#sortFilter").value === "purchased_desc") $("#sortFilter").value = "";
   if (view === "collection" && !$("#sortFilter").value) $("#sortFilter").value = "purchased_desc";
-  if (libraryMode) loadBooks(true).catch(error => toast(error.message, true));
-  if (view === "series") loadSeries(true).catch(error => toast(error.message, true));
-  if (view === "upcoming") loadUpcoming().catch(error => toast(error.message, true));
-  if (view === "recommendations") loadRecommendations().catch(error => toast(error.message, true));
-  if (view === "notifications") loadNotificationPreferences().catch(error => toast(error.message, true));
-  if (view === "quality") loadQuality().catch(error => toast(error.message, true));
-  if (view === "preferences") loadPreferences().catch(error => toast(error.message, true));
+  document.title = `${titles[view][1]}｜AniShelf`;
+  if (view === "home") return window.AniShelfHome.load({api, user: state.user, openBook: openDetail});
+  try {
+    if (!state.catalogPromise) state.catalogPromise = Promise.all([loadPublishers(), loadStats()]).catch(error => { state.catalogPromise = null; throw error; });
+    await state.catalogPromise;
+    if (state.view !== view) return;
+    if (libraryMode) await loadBooks(true);
+    if (view === "series") await loadSeries(true);
+    if (view === "upcoming") await loadUpcoming();
+    if (view === "recommendations") await loadRecommendations();
+    if (view === "notifications") await loadNotificationPreferences();
+    if (view === "quality") await loadQuality();
+    if (view === "preferences") await loadPreferences();
+  } catch (error) { toast(error.message, true); }
 }
 
 let searchTimer;
@@ -1058,7 +1075,18 @@ $("#searchInput").addEventListener("input", () => {
     load().catch(error => toast(error.message, true));
   });
 });
-$$(".nav-item").forEach(item => item.addEventListener("click", () => switchView(item.dataset.view)));
+$$(".nav-item").forEach(item => {
+  item.setAttribute("aria-label", item.textContent.trim());
+  item.addEventListener("click", () => switchView(item.dataset.view));
+});
+window.addEventListener("hashchange", () => {
+  if (state.ready) switchView(location.hash.slice(1) || "home", true);
+});
+window.AniShelfHome.init({search: query => {
+  clearFilters(false);
+  $("#searchInput").value = query;
+  switchView("library");
+}});
 $("#clearFilters").addEventListener("click", () => clearFilters());
 $("#upcomingDays").addEventListener("change", () => loadUpcoming().catch(error => toast(error.message, true)));
 $("#notifyButton").addEventListener("click", () => enableNotifications().catch(error => toast(error.message, true)));
@@ -1222,7 +1250,11 @@ $("#followPromptLater").addEventListener("click", () => {
 document.addEventListener("keydown", event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
-    $("#searchInput").focus();
+    if (state.view === "home") $("#homeSearchInput").focus();
+    else {
+      if (!["library", "wishlist", "collection", "series"].includes(state.view)) switchView("library");
+      $("#searchInput").focus();
+    }
   }
 });
 
@@ -1237,9 +1269,5 @@ window.addEventListener("resize", () => {
   }, 180);
 });
 
-const initialView = location.hash.slice(1);
 loadAll()
-  .then(loaded => {
-    if (loaded && initialView && initialView !== "library") switchView(initialView);
-  })
   .catch(error => toast(error.message, true));

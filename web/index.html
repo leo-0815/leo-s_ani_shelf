@@ -20,12 +20,13 @@
     </section>
     <div class="shell">
       <aside class="sidebar">
-        <a class="brand" href="#library" aria-label="AniShelf 首頁">
+        <a class="brand" href="#home" aria-label="AniShelf 首頁">
           <span class="brand-mark">A</span>
           <span><strong>AniShelf</strong><small>出版追蹤書架</small></span>
         </a>
         <nav aria-label="主要導覽">
-          <button class="nav-item active" data-view="library"><span>▦</span>Library</button>
+          <button class="nav-item active" data-view="home" aria-label="首頁"><span>⌂</span>首頁</button>
+          <button class="nav-item" data-view="library"><span>▦</span>Library</button>
           <button class="nav-item" data-view="series"><span>▤</span>系列書架</button>
           <button class="nav-item" data-view="upcoming"><span>◷</span>近期上市</button>
           <button class="nav-item" data-view="wishlist"><span>♡</span>已訂選</button>
@@ -50,11 +51,11 @@
 
         <header class="topbar">
           <div>
-            <p class="eyebrow" id="pageEyebrow">MY COLLECTION</p>
-            <h1 id="pageTitle">Library</h1>
+            <p class="eyebrow" id="pageEyebrow">YOUR READING SPACE</p>
+            <h1 id="pageTitle">我的書架首頁</h1>
           </div>
           <div class="top-actions">
-            <label class="searchbox" id="searchBox">
+            <label class="searchbox hidden" id="searchBox">
               <span>⌕</span>
               <input id="searchInput" type="search" placeholder="搜尋部分書名、作者或 ISBN" autocomplete="off" />
               <kbd>Ctrl K</kbd>
@@ -68,7 +69,44 @@
           </div>
         </header>
 
-        <section class="stats" aria-label="資料摘要">
+        <section class="home-view view-section" id="homeView" aria-label="首頁導航">
+          <div class="home-hero">
+            <div class="home-intro">
+              <p class="eyebrow">A PLACE FOR YOUR NEXT CHAPTER</p>
+              <h2 id="homeGreeting">歡迎回到你的書架。</h2>
+              <p>找下一本想讀的書，整理已收藏的故事。<br>你的訂選、系列與上市消息，都從這裡開始。</p>
+              <form class="home-search" id="homeSearchForm" role="search">
+                <label class="sr-only" for="homeSearchInput">搜尋部分書名、作者或 ISBN</label>
+                <span aria-hidden="true">⌕</span>
+                <input id="homeSearchInput" type="search" placeholder="搜尋部分書名、作者或 ISBN" autocomplete="off" />
+                <button class="primary" type="submit">找書 ↗</button>
+              </form>
+              <small>不必輸入完整書名 · Ctrl K 快速搜尋</small>
+            </div>
+            <div class="home-shelf" aria-hidden="true"><span class="shelf-caption">ONE MORE CHAPTER</span><div class="shelf-books"><i>AniShelf</i><i>漫畫</i><i>STORIES</i><i>輕小說</i><i>YOUR SHELF</i></div><div class="shelf-base"></div><span class="shelf-footnote">把喜歡的故事，留在自己的書架。</span></div>
+          </div>
+          <div class="home-counts" aria-label="個人書架摘要">
+            <a href="#wishlist"><span class="stat-icon coral" aria-hidden="true">♡</span><span><small>已訂選</small><strong id="homeWishlist">—</strong></span><b aria-hidden="true">↗</b></a>
+            <a href="#collection"><span class="stat-icon mint" aria-hidden="true">✓</span><span><small>我的藏書</small><strong id="homeCollection">—</strong></span><b aria-hidden="true">↗</b></a>
+            <a href="#series"><span class="stat-icon violet" aria-hidden="true">▤</span><span><small>追蹤系列</small><strong id="homeFollowed">—</strong></span><b aria-hidden="true">↗</b></a>
+          </div>
+          <div class="home-section-title"><div><p class="eyebrow">EXPLORE YOUR SHELF</p><h2>今天想做什麼？</h2></div><a href="#preferences">調整瀏覽偏好 ↗</a></div>
+          <div class="home-shortcuts">
+            <a href="#library"><span class="stat-icon coral" aria-hidden="true">⌕</span><div><h3>查詢書籍</h3><p>漫畫、輕小說與不同版本，一起找。</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#series"><span class="stat-icon violet" aria-hidden="true">▤</span><div><h3>系列書架</h3><p>整理系列集數，追蹤喜歡的故事。</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#upcoming"><span class="stat-icon amber" aria-hidden="true">◷</span><div><h3>近期上市</h3><p>查看出版日期，安排下一次補書。</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#wishlist"><span class="stat-icon coral" aria-hidden="true">♡</span><div><h3>已訂選</h3><p>想買或已預購的書，不再忘記。</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#collection"><span class="stat-icon mint" aria-hidden="true">✓</span><div><h3>我的藏書</h3><p>收藏、購入紀錄與手動新增書籍。</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#recommendations"><span class="stat-icon violet" aria-hidden="true">✦</span><div><h3>為你推薦</h3><p>從你的收藏出發，發現下一本好書。</p></div><b aria-hidden="true">↗</b></a>
+          </div>
+          <section class="home-releases" aria-labelledby="homeReleaseTitle">
+            <div class="home-section-title"><div><p class="eyebrow">COMING TO YOUR SHELF</p><h2 id="homeReleaseTitle">你關注的書，即將上市</h2><small id="homeDate">未來 7 天 · 台北時間</small></div><a href="#upcoming">查看上市日程 ↗</a></div>
+            <div id="homeUpcoming" class="home-upcoming" aria-live="polite"></div>
+            <p class="home-release-note">依出版社目前公布的預定日期整理，不代表已上架或出貨；請以商品頁為準。僅顯示符合目前瀏覽偏好的書目。</p>
+          </section>
+        </section>
+
+        <section class="stats hidden" id="catalogStats" aria-label="資料摘要">
           <article><span class="stat-icon coral">▦</span><div><small>所有書目</small><strong id="statTotal">—</strong></div></article>
           <article><span class="stat-icon amber">◷</span><div><small>即將出版</small><strong id="statScheduled">—</strong></div></article>
           <article title="依目前資料日期推算，不代表實際上架或庫存"><span class="stat-icon mint">✓</span><div><small>已到上市日</small><strong id="statAvailable">—</strong></div></article>
@@ -76,7 +114,7 @@
           <article><span class="stat-icon violet">♡</span><div><small>已訂選／追蹤</small><strong id="statWishlist">—</strong></div></article>
         </section>
 
-        <div class="catalog-filter-bar" id="catalogFilterBar">
+        <div class="catalog-filter-bar hidden" id="catalogFilterBar">
           <details class="publisher-picker" id="publisherFilter">
             <summary id="publisherSummary">全部出版社</summary>
             <div class="publisher-menu">
@@ -92,7 +130,7 @@
           <small id="publisherSelectionHint">顯示全部出版社；可任選多家</small>
           <button class="text-button" id="publisherReset" type="button">重設出版社</button>
         </div>
-        <section class="content-card view-section" id="libraryView">
+        <section class="content-card view-section hidden" id="libraryView">
           <div class="collection-summary hidden" id="collectionSummary">
             <article><small>藏書</small><strong id="collectionTotal">0</strong></article>
             <article><small>紙本</small><strong id="collectionPaper">0</strong></article>
@@ -323,6 +361,7 @@
     </dialog>
 
     <div class="toast hidden" id="toast" role="status"></div>
+    <script src="/home.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
