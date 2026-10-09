@@ -23,7 +23,7 @@ function element() {
     querySelectorAll:s=>s==='.nav-item'?nav:s==='.view-section'?sections:[], addEventListener:(e,f)=>events[e]=f};
   const location={hash:''};
   const history={pushState:(a,b,url)=>{historyCalls.push(['push',url]);location.hash=url},replaceState:(a,b,url)=>{historyCalls.push(['replace',url]);location.hash=url}};
-  const ctx=vm.createContext({document,window:{addEventListener:(e,f)=>events[e]=f},location,history,
+  const ctx=vm.createContext({document,window:{addEventListener:(e,f)=>events[e]=f,AniShelfGuestUi:{init(){},offer:async()=>{}}},location,history,
     console,Intl,Date,URLSearchParams,Set,setTimeout,clearTimeout,setInterval,clearInterval,requests});
   vm.runInContext(fs.readFileSync(path.join(root,'web/home.js'),'utf8'),ctx);
   let source=fs.readFileSync(path.join(root,'web/app.js'),'utf8');

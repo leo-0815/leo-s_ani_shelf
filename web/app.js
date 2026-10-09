@@ -78,6 +78,9 @@ function api(path, options = {}) {
 }
 
 async function apiRequest(path, options, owner) {
+  if (state.user?.is_guest && !path.startsWith("/api/guest/")) {
+    return window.AniShelfGuest.api(path, options, (p, o = {}) => apiRequest(p, {method:"GET", ...o}, owner));
+  }
   const headers = {"Content-Type": "application/json", ...(options.headers || {})};
   if (state.csrfToken && options.method && options.method !== "GET") {
     headers["X-CSRF-Token"] = state.csrfToken;
@@ -90,8 +93,13 @@ async function apiRequest(path, options, owner) {
     apiCooldowns.set(`${owner}:${bucket}`, Date.now() + seconds * 1000);
     throw new Error(`操作較頻繁，請等待 ${seconds} 秒後再試`);
   }
-  if (response.status === 401 && path !== "/api/auth/me") showLogin();
-  if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
+  if (response.status === 401 && path !== "/api/auth/me" && !data.guest_expired) showLogin();
+  if (!response.ok) {
+    const error = new Error(data.error || data.message || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.guestExpired = Boolean(data.guest_expired);
+    throw error;
+  }
   return data;
 }
 
@@ -119,13 +127,26 @@ function applyRoleUi() {
   });
   $("#accountMenu").classList.remove("hidden");
   $("#accountName").textContent = state.user.display_name || state.user.email;
-  $("#accountRole").textContent = isAdmin ? "管理員" : "一般帳號";
+  $("#accountRole").textContent = state.user.is_guest ? "訪客 · 儲存在此瀏覽器" : isAdmin ? "管理員" : "一般帳號";
+  $("#logoutButton").textContent = state.user.is_guest ? "離開訪客" : "登出";
+  $("#guestGoogleLogin").classList.toggle("hidden", !state.user.is_guest);
+  $("#guestImport").classList.toggle("hidden", Boolean(state.user.is_guest));
+  $("#guestSwitch").classList.toggle("hidden", Boolean(state.user.is_guest));
   const avatar = $("#accountAvatar");
   avatar.src = state.user.avatar_url || "";
   avatar.classList.toggle("hidden", !state.user.avatar_url);
 }
 
 async function loadSession() {
+  let local;
+  try { local = await window.AniShelfGuest.read(); } catch (_) { /* Google login remains available if browser storage is blocked. */ }
+  if (local?.entered) {
+    state.user = await window.AniShelfGuestUi.session(local);
+    state.csrfToken = "";
+    $("#loginGate").classList.add("hidden");
+    applyRoleUi();
+    return true;
+  }
   const session = await api("/api/auth/me");
   if (!session.authenticated) {
     const config = await api("/api/auth/config");
@@ -200,9 +221,10 @@ async function loadAll() {
     state.ready = true;
     await switchView(location.hash.slice(1) || "home", true);
     $("#healthDot").className = "health-dot ok";
-    $("#healthText").textContent = "TiDB 已連接";
+    $("#healthText").textContent = state.user.is_guest ? "訪客書架 · 本瀏覽器" : "TiDB 已連接";
     $("#setupBanner").classList.add("hidden");
     if (state.user.is_admin) loadLatestJob().catch(error => toast(error.message, true));
+    if (!state.user.is_guest) window.AniShelfGuestUi.offer(false).catch(error => toast(error.message, true));
     return true;
   } catch (error) {
     $("#healthDot").className = "health-dot bad";
@@ -301,7 +323,11 @@ function bookParams() {
     ["ownedFormatFilter", "owned_format"],
     ["dateFromFilter", "date_from"], ["dateToFilter", "date_to"],
   ];
-  mappings.forEach(([id, key]) => { if ($(`#${id}`).value) params.set(key, $(`#${id}`).value); });
+  mappings.forEach(([id, key]) => {
+    if (id === "wishlistStateFilter" && state.view !== "wishlist") return;
+    if (id === "ownedFormatFilter" && state.view !== "collection") return;
+    if ($(`#${id}`).value) params.set(key, $(`#${id}`).value);
+  });
   addPublisherParams(params);
   if (state.view === "wishlist") params.set("wishlist", "1");
   if (state.view === "collection") params.set("collection", "1");
@@ -560,9 +586,9 @@ async function saveWishlist(event) {
   };
   try {
     const endpoint = state.detailMode === "collection" ? `/api/collection/book/${state.currentBook.id}` : `/api/wishlist/${state.currentBook.id}`;
-    await api(endpoint, {method: "POST", body: JSON.stringify(payload)});
+    const saved = await api(endpoint, {method: "POST", body: JSON.stringify(payload)});
     $("#detailDialog").close();
-    toast(state.detailMode === "collection" ? "藏書已儲存" : (payload.state === "purchased" ? "已加入藏書，關注仍保留" : "訂選清單已儲存"));
+    toast(saved.warning || (state.detailMode === "collection" ? "藏書已儲存" : (payload.state === "purchased" ? "已加入藏書，關注仍保留" : "訂選清單已儲存")));
     await Promise.all([loadBooks(), loadStats()]);
     if (shouldSuggestFollow) showSeriesFollowPrompt(book);
   } catch (error) { toast(error.message, true); }
@@ -874,6 +900,9 @@ async function enableNotifications() {
 }
 
 async function loadNotificationPreferences() {
+  $("#guestNotificationNote").classList.toggle("hidden", !state.user.is_guest);
+  $("#notificationPreferencesForm").classList.toggle("hidden", Boolean(state.user.is_guest));
+  if (state.user.is_guest) return;
   const preferences = await api("/api/notification-preferences");
   $("#notificationEmail").textContent = preferences.email;
   $("#emailNotificationsEnabled").checked = Boolean(preferences.email_enabled);
@@ -1163,6 +1192,14 @@ $("#nextSeriesPage").addEventListener("click", () => {
 });
 $("#updateButton").addEventListener("click", startUpdate);
 $("#logoutButton").addEventListener("click", async () => {
+  if (state.user?.is_guest) {
+    try {
+      await window.AniShelfGuest.mutate(data => {data.entered = false;});
+      await apiRequest("/api/guest/end", {method:"POST", body:"{}"}, state.user.id);
+      location.assign("/");
+    } catch (error) {toast(error.message, true);}
+    return;
+  }
   try {
     await api("/api/auth/logout", {method: "POST", body: "{}"});
   } finally {
@@ -1313,5 +1350,6 @@ window.addEventListener("resize", () => {
   }, 180);
 });
 
+window.AniShelfGuestUi.init();
 loadAll()
   .catch(error => toast(error.message, true));

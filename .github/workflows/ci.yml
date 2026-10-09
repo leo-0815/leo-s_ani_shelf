@@ -23,6 +23,10 @@ jobs:
       - run: python -m unittest discover -v
       - run: node --check web/app.js
       - run: node --check web/home.js
+      - run: node --check web/guest.js
+      - run: node --check web/guest-ui.js
+      - run: node scripts/test_guest_store.cjs
+      - run: node scripts/test_guest_ui.cjs
       - run: node scripts/test_home_ui.cjs
       - run: node scripts/test_release_display.cjs
       - run: node scripts/test_api_guards.cjs
