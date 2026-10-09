@@ -15,8 +15,8 @@
         <h1>登入你的收藏書架</h1>
         <p>使用 Google 帳號登入；AniShelf 不會取得或保存你的 Google 密碼。</p>
         <a class="google-login" id="googleLogin" href="/auth/google">使用 Google 登入</a>
-        <button class="secondary guest-entry" id="guestLogin" type="button">不用註冊，以訪客身分使用</button>
-        <small>訪客書架只保存在這個瀏覽器，不跨裝置同步。清除網站資料或關閉無痕視窗會遺失，請定期備份。</small>
+        <button class="secondary guest-entry" id="guestLogin" type="button" aria-describedby="guestStorageWarning">不用註冊，以訪客身分使用</button>
+        <p class="guest-entry-warning" id="guestStorageWarning" role="note"><strong>注意：訪客資料僅保存在此瀏覽器，不會同步到雲端。</strong><br>書架資料使用瀏覽器儲存空間（IndexedDB），Cookie 僅保存訪客識別。清除 Cookie／網站資料、使用無痕模式或更換裝置，可能無法保留原書架；請定期備份。</p>
         <small class="hidden" id="loginUnavailable">站長尚未完成 Google 登入設定。</small>
       </div>
     </section>
