@@ -125,10 +125,10 @@ class PublisherFilterTests(unittest.TestCase):
         with patch("app.preferences.transaction") as tx:
             cursor = tx.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
             cursor.fetchone.return_value = None
-            self.assertEqual(get_preferences(7), {"general_audience": True})
+            self.assertEqual(get_preferences(7), {"general_audience": True, "content_mode": "general"})
             self.assertEqual(cursor.execute.call_args.args[1], (7,))
-            self.assertEqual(set_preferences(7, {"general_audience": True}), {"general_audience": True})
-            self.assertEqual(cursor.execute.call_args.args[1], (7, True))
+            self.assertEqual(set_preferences(7, {"general_audience": True}), {"general_audience": True, "content_mode": "general"})
+            self.assertEqual(cursor.execute.call_args.args[1], (7, True, "general"))
             cursor.fetchone.return_value = {"general_audience": False}
             self.assertFalse(get_preferences(7)["general_audience"])
             cursor.fetchone.return_value = {"role": "admin", "general_audience": None}

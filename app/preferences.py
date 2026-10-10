@@ -6,17 +6,32 @@ from typing import Any, Iterator
 
 from .db import transaction
 
-_GENERAL_AUDIENCE: ContextVar[bool] = ContextVar("general_audience", default=False)
+CONTENT_MODES = frozenset({"general", "bl", "r18", "all"})
+_CONTENT_MODE: ContextVar[str] = ContextVar("content_mode", default="all")
+
+
+def content_mode(mode: Any = None, general_audience: bool = True) -> str:
+    """Keep legacy preferences without resetting any existing account."""
+    if mode is None:
+        return "general" if general_audience else "all"
+    if not isinstance(mode, str) or mode not in CONTENT_MODES:
+        raise ValueError("無效的內容顯示模式")
+    return mode
+
+
+def preference_values(mode: str) -> dict[str, Any]:
+    return {"content_mode": mode, "general_audience": mode == "general"}
 
 
 @contextmanager
-def visibility_scope(enabled: bool) -> Iterator[None]:
+def visibility_scope(enabled: bool | str) -> Iterator[None]:
     # Thread/request-local: one account's preference must never affect another.
-    token = _GENERAL_AUDIENCE.set(bool(enabled))
+    mode = content_mode(None, enabled) if isinstance(enabled, bool) else content_mode(enabled)
+    token = _CONTENT_MODE.set(mode)
     try:
         yield
     finally:
-        _GENERAL_AUDIENCE.reset(token)
+        _CONTENT_MODE.reset(token)
 
 
 def _trusted_general_sql(prefix: str) -> str:
@@ -45,16 +60,24 @@ def _general_audience_sql(prefix: str) -> str:
 
 
 def visible_book_sql(alias: str = "b") -> str:
-    if not _GENERAL_AUDIENCE.get():
-        return "1 = 1"
-    return _general_audience_sql(f"{alias}." if alias else "")
+    mode = _CONTENT_MODE.get()
+    prefix = f"{alias}." if alias else ""
+    conditions = []
+    if mode in {"general", "bl"}:
+        conditions.append(f"COALESCE({prefix}content_rating, 'unknown') <> 'restricted_18'")
+    if mode in {"general", "r18"}:
+        conditions.append(f"COALESCE({prefix}bl_category, '') = ''")
+    return "(" + " AND ".join(conditions) + ")" if conditions else "1 = 1"
 
 
 def notification_visibility_sql(book_alias: str = "b", user_alias: str = "u") -> str:
     """Per-recipient policy; independent of the web request ContextVar."""
-    return (f"(NOT COALESCE((SELECT up.general_audience FROM user_preferences up "
-            f"WHERE up.user_id = {user_alias}.id), {user_alias}.role <> 'admin') OR "
-            f"{_general_audience_sql(book_alias + '.')})")
+    mode = (f"COALESCE((SELECT COALESCE(up.content_mode, CASE WHEN up.general_audience "
+            f"THEN 'general' ELSE 'all' END) FROM user_preferences up "
+            f"WHERE up.user_id = {user_alias}.id), CASE WHEN {user_alias}.role = 'admin' "
+            f"THEN 'all' ELSE 'general' END)")
+    return (f"(({mode} IN ('r18', 'all') OR COALESCE({book_alias}.content_rating, 'unknown') <> 'restricted_18') "
+            f"AND ({mode} IN ('bl', 'all') OR COALESCE({book_alias}.bl_category, '') = ''))")
 
 
 def publisher_visible(code: str) -> bool:
@@ -63,16 +86,17 @@ def publisher_visible(code: str) -> bool:
     return True
 
 
-def get_preferences(user_id: int) -> dict[str, bool]:
+def get_preferences(user_id: int) -> dict[str, Any]:
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT u.role, p.general_audience FROM users u "
+                "SELECT u.role, p.general_audience, p.content_mode FROM users u "
                 "LEFT JOIN user_preferences p ON p.user_id = u.id WHERE u.id = %s", (user_id,)
             )
             row = cursor.fetchone()
     default = not (row and row.get("role") == "admin")
-    return {"general_audience": default if row is None or row.get("general_audience") is None else bool(row["general_audience"])}
+    legacy = default if row is None or row.get("general_audience") is None else bool(row["general_audience"])
+    return preference_values(content_mode(row.get("content_mode") if row else None, legacy))
 
 
 def migrate_general_audience_default(cursor: Any, *, cloud: bool) -> bool:
@@ -113,16 +137,22 @@ def migrate_general_audience_default(cursor: Any, *, cloud: bool) -> bool:
     return True
 
 
-def set_preferences(user_id: int, payload: dict[str, Any]) -> dict[str, bool]:
-    enabled = payload.get("general_audience")
-    if not isinstance(enabled, bool):
-        raise ValueError("一般向設定必須為布林值")
+def set_preferences(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    if "content_mode" in payload:
+        if payload["content_mode"] is None:
+            raise ValueError("無效的內容顯示模式")
+        mode = content_mode(payload["content_mode"])
+    else:
+        enabled = payload.get("general_audience")
+        if not isinstance(enabled, bool):
+            raise ValueError("一般向設定必須為布林值")
+        mode = content_mode(None, enabled)
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO user_preferences (user_id, general_audience) VALUES (%s, %s) "
-                "ON DUPLICATE KEY UPDATE general_audience = VALUES(general_audience)",
-                (user_id, enabled),
+                "INSERT INTO user_preferences (user_id, general_audience, content_mode) VALUES (%s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE general_audience = VALUES(general_audience), content_mode = VALUES(content_mode)",
+                (user_id, mode == "general", mode),
             )
-    return {"general_audience": enabled}
+    return preference_values(mode)
 

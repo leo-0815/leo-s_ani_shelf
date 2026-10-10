@@ -14,9 +14,9 @@ class RatingVisibilityTests(unittest.TestCase):
                 rating_source TEXT,rating_confidence INTEGER,rating_checked_at TEXT,
                 rating_parser_version TEXT,rating_locked INTEGER,bl_category TEXT);
             CREATE TABLE users(id INTEGER,role TEXT);
-            CREATE TABLE user_preferences(user_id INTEGER,general_audience INTEGER);
+            CREATE TABLE user_preferences(user_id INTEGER,general_audience INTEGER,content_mode TEXT);
             INSERT INTO users VALUES(1,'user'),(2,'admin'),(3,'user'),(4,'admin');
-            INSERT INTO user_preferences VALUES(3,0),(4,1);
+            INSERT INTO user_preferences VALUES(3,0,NULL),(4,1,NULL);
         """)
         for pub_id,(code,version) in enumerate(PARSER_VERSIONS.items(),1):
             self.db.execute("INSERT INTO publishers VALUES(?,?,?)",(pub_id,code,code))

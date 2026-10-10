@@ -4,7 +4,7 @@ window.AniShelfGuestUi = (() => {
   const count = data => Object.keys(data.wishlist).length + Object.keys(data.collection).length + Object.keys(data.custom).length + data.follows.length;
   async function session(local) {
     const user = await apiRequest("/api/guest/start", {method:"POST",body:"{}"}, "guest-entry");
-    return {...user, general_audience:local.preferences.general_audience};
+    return {...user, ...local.preferences};
   }
   async function enter(button) {
     button.disabled = true;

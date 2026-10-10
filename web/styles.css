@@ -35,6 +35,8 @@ button, input, select, textarea { font: inherit; }
 button, select { cursor: pointer; }
 .hidden { display: none !important; }
 .preferences-form { max-width: 720px; padding: 28px; }
+.preferences-form label[for="contentMode"] { display: block; margin-bottom: 10px; font-weight: 700; }
+#contentMode { width: 100%; max-width: 380px; padding: 12px; font-size: 14px; }
 .preference-switch { display: flex; align-items: center; gap: 10px; font-weight: 700; }
 .preference-switch input { accent-color: var(--coral); width: 20px; height: 20px; }
 .preferences-form p { color: var(--muted); font-size: 13px; line-height: 1.8; }

@@ -1,8 +1,14 @@
 /* Guest personal state stays in IndexedDB. Only public book/series references
    are sent for catalog refresh; notes/orders are sent only on confirmed import. */
 window.AniShelfGuest = (() => {
-  const empty = () => ({version:1, entered:false, books:{}, wishlist:{}, collection:{}, custom:{}, follows:[], dismissed:[], decisions:{}, preferences:{general_audience:true}, nextId:1});
-  let dbPromise, refreshPromise, refreshedAt = 0, visible = new Set();
+  const empty = () => ({version:1, entered:false, books:{}, wishlist:{}, collection:{}, custom:{}, follows:[], dismissed:[], decisions:{}, preferences:{general_audience:true,content_mode:"general"}, nextId:1});
+  function contentPreferences(raw = {}) {
+    raw = raw ?? {};
+    const mode = raw.content_mode ?? (raw.general_audience === false ? "all" : "general");
+    if (!["general","bl","r18","all"].includes(mode)) throw new Error("無效的內容顯示模式");
+    return {content_mode:mode, general_audience:mode === "general"};
+  }
+  let dbPromise, refreshPromise, refreshGeneration = 0, refreshedAt = 0, visible = new Set();
   const publicCache = new Map();
   const clone = value => JSON.parse(JSON.stringify(value));
   const seriesKey = book => JSON.stringify([book.publisher_code || book.publisher, book.series_key, book.media_type]);
@@ -69,7 +75,7 @@ window.AniShelfGuest = (() => {
     });
     if (raw.dismissed.some(id=>!Number.isSafeInteger(id) || id <= 0)) throw new Error("推薦資料格式錯誤");
     data.dismissed = [...new Set(raw.dismissed)];
-    data.preferences.general_audience = raw.preferences?.general_audience !== false;
+    data.preferences = contentPreferences(raw.preferences);
     data.nextId = Math.max(1, ...Object.keys(data.custom).map(Number), ...Object.values(data.collection).map(row=>row.id)) + 1;
     data.entered = raw.entered === true;
     if (object(raw.decisions)) for (const [key,value] of Object.entries(raw.decisions)) if (/^\d+$/.test(key) && ["later","imported"].includes(value)) data.decisions[key] = value;
@@ -90,7 +96,13 @@ window.AniShelfGuest = (() => {
     const db = await database();
     return new Promise((resolve,reject) => {
       const request = db.transaction("state","readonly").objectStore("state").get("shelf");
-      request.onsuccess = () => resolve(request.result || empty());
+      request.onsuccess = () => {
+        try {
+          const data = request.result || empty();
+          data.preferences = contentPreferences(data.preferences);
+          resolve(data);
+        } catch (error) { reject(error); }
+      };
       request.onerror = () => reject(new Error("無法讀取訪客書架"));
     });
   }
@@ -108,7 +120,7 @@ window.AniShelfGuest = (() => {
       tx.onabort = tx.onerror = () => reject(error || new Error("訪客資料未儲存成功；可能是空間不足，請先備份或改用 Google 登入"));
     });
   }
-  function reset() {publicCache.clear(); refreshedAt=0; visible=new Set();}
+  function reset() {refreshGeneration++; publicCache.clear(); refreshedAt=0; visible=new Set();}
   async function network(path, transport, options = {}) {
     const key = path + (options.body || "");
     if (publicCache.has(key) && publicCache.get(key).until > Date.now()) return clone(publicCache.get(key).data);
@@ -125,30 +137,37 @@ window.AniShelfGuest = (() => {
   }
   async function publicRead(path, transport, data, options) {
     const [base,query=""] = path.split("?"), params=new URLSearchParams(query);
-    params.set("general",data.preferences.general_audience ? "1":"0");
+    params.set("content_mode",contentPreferences(data.preferences).content_mode);
     return network(base.replace("/api/","/api/guest/")+"?"+params,transport,options);
   }
   async function refresh(transport, force=false) {
-    if (refreshPromise) return refreshPromise;
+    if (refreshPromise) {
+      await refreshPromise;
+      return refresh(transport, force);
+    }
     if (!force && Date.now()-refreshedAt < 30000) return;
+    const current = refreshGeneration;
     refreshPromise = (async () => {
       const data=await read(), books={}, currentVisible=new Set();
       const ids=[...new Set([...Object.keys(data.wishlist),...Object.keys(data.collection)].map(Number))];
       for (let offset=0;offset<ids.length;offset+=50) {
         const rows=await publicRead("/api/book-batch?ids="+ids.slice(offset,offset+50).join(","),transport,data);
+        if (current !== refreshGeneration) return;
         rows.items.forEach(book=>{books[book.id]=book; currentVisible.add(book.id);});
       }
       for (let offset=0;offset<data.follows.length;offset+=20) {
         const series=data.follows.slice(offset,offset+20); let after=0, pages=0;
         while (true) {
-          const rows=await network("/api/guest/resolve",transport,{method:"POST",body:JSON.stringify({series,after,general:data.preferences.general_audience})});
+          const rows=await network("/api/guest/resolve",transport,{method:"POST",body:JSON.stringify({series,after,content_mode:contentPreferences(data.preferences).content_mode})});
+          if (current !== refreshGeneration) return;
           rows.items.forEach(book=>{books[book.id]=book; currentVisible.add(book.id);});
           if (!rows.has_more) break;
           if (++pages>=20 || rows.next_after_id<=after) throw new Error("系列書目較多，請稍後再更新訪客追蹤");
           after=rows.next_after_id;
         }
       }
-      await mutate(latest=>{
+      const committed = await mutate(latest=>{
+        if (current !== refreshGeneration) return false;
         Object.assign(latest.books,books);
         for (const follow of latest.follows) {
           const seen=new Set(follow.seen);
@@ -159,8 +178,9 @@ window.AniShelfGuest = (() => {
           }
           follow.seen=[...seen];
         }
+        return true;
       });
-      visible=currentVisible; refreshedAt=Date.now();
+      if (committed && current === refreshGeneration) {visible=currentVisible; refreshedAt=Date.now();}
     })().finally(()=>refreshPromise=null);
     return refreshPromise;
   }
@@ -215,7 +235,11 @@ window.AniShelfGuest = (() => {
     const method=options.method || "GET", payload=options.body ? JSON.parse(options.body) : {};
     let data=await read();
     if (method!=="GET") {
-      if (p==="/api/preferences") {if(typeof payload.general_audience!=="boolean")throw new Error("偏好格式錯誤"); await mutate(d=>d.preferences={general_audience:payload.general_audience}); reset(); return {general_audience:payload.general_audience};}
+      if (p==="/api/preferences") {
+        if (payload.content_mode == null && typeof payload.general_audience!=="boolean") throw new Error("偏好格式錯誤");
+        const preferences=contentPreferences(payload);
+        await mutate(d=>d.preferences=preferences); reset(); return preferences;
+      }
       if (p==="/api/series/follow") return follow(payload,transport);
       if (p==="/api/recommendations/dismiss") {await mutate(d=>{if(!d.dismissed.includes(payload.book_id))d.dismissed.push(payload.book_id);}); return {ok:true};}
       if (p==="/api/recommendations/dismissals") {await mutate(d=>d.dismissed=[]); return {ok:true};}

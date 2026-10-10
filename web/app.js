@@ -11,6 +11,7 @@ const state = {
   publishers: [],
   selectedPublishers: null,
   generalAudience: true,
+  contentMode: "general",
   currentBook: null,
   currentSeries: null,
   pendingSeriesFollow: null,
@@ -77,7 +78,7 @@ function api(path, options = {}) {
   const remaining = Math.max(readCooldown(owner, path), Math.ceil(((apiCooldowns.get(bucketKey) || 0) - Date.now()) / 1000));
   if (remaining > 0) return Promise.reject(new Error(`操作較頻繁，請等待 ${remaining} 秒後再試`));
   apiCooldowns.delete(bucketKey);
-  const key = `${owner}:${path}`;
+  const key = `${owner}:${state.contentMode}:${path}`;
   if (method === "GET" && apiInflight.has(key)) return apiInflight.get(key);
   const request = apiRequest(path, {...options, method}, owner);
   if (method === "GET") {
@@ -224,12 +225,18 @@ const wishlistLabels = {wanted: "想買", preordered: "已預購", purchased: "�
 const issueLabels = {missing_author: "缺作者", missing_isbn: "缺 ISBN", missing_date: "缺日期", unknown_type: "類型未定", suspicious_date: "可疑舊日期"};
 const priorityLabels = ["一般", "稍高", "優先", "必買"];
 const formatLabels = {paper: "紙本", digital: "電子書", both: "紙本＋電子"};
+const contentModeLabels = {general: "一般向", bl: "一般向＋BL", r18: "一般向＋R18", all: "全部內容"};
+function applyContentPreference(data) {
+  state.contentMode = data.content_mode || (data.general_audience ? "general" : "all");
+  state.generalAudience = state.contentMode === "general";
+  $("#contentMode").value = state.contentMode;
+  if (state.user) Object.assign(state.user, {content_mode: state.contentMode, general_audience: state.generalAudience});
+}
 
 async function loadAll() {
   if (!await loadSession()) return;
   try {
-    state.generalAudience = Boolean(state.user.general_audience);
-    $("#generalAudience").checked = state.generalAudience;
+    applyContentPreference(state.user);
     state.ready = true;
     await switchView(location.hash.slice(1) || "home", true);
     $("#healthDot").className = "health-dot ok";
@@ -248,7 +255,9 @@ async function loadAll() {
 }
 
 async function loadStats() {
+  const mode = state.contentMode;
   const data = await api("/api/stats");
+  if (mode !== state.contentMode) return;
   $("#statTotal").textContent = data.total.toLocaleString();
   $("#statScheduled").textContent = data.scheduled.toLocaleString();
   $("#statAvailable").textContent = data.available.toLocaleString();
@@ -263,7 +272,9 @@ async function loadStats() {
 }
 
 async function loadPublishers() {
+  const mode = state.contentMode;
   const data = await api("/api/publishers");
+  if (mode !== state.contentMode) return;
   state.publishers = data.items;
   renderPublisherOptions();
   renderPublisherSummary();
@@ -283,7 +294,7 @@ function renderPublisherSummary() {
   const selected = state.selectedPublishers;
   const names = selected === null ? [] : selectablePublishers().filter(item => selected.includes(item.code)).map(item => item.name);
   $("#publisherSummary").textContent = selected === null ? "全部出版社" : !selected.length ? "未選擇出版社" : selected.length === 1 ? (names[0] || selected[0]) : `已選 ${selected.length} 家出版社`;
-  $("#publisherSelectionHint").textContent = selected === null ? (state.generalAudience ? "一般向：排除已確認 BL／R18；可任選多家" : "顯示全部出版社；可任選多家") : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社沒有可見書目";
+  $("#publisherSelectionHint").textContent = selected === null ? `${contentModeLabels[state.contentMode]}；可任選多家出版社` : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社沒有可見書目";
 }
 
 function addPublisherParams(params) {
@@ -351,8 +362,7 @@ function bookParams() {
 
 async function loadPreferences() {
   const data = await api("/api/preferences");
-  state.generalAudience = Boolean(data.general_audience);
-  $("#generalAudience").checked = state.generalAudience;
+  applyContentPreference(data);
   renderPublisherSummary();
 }
 
@@ -361,8 +371,9 @@ $("#preferencesForm").addEventListener("submit", async event => {
   const button = $("#preferencesForm button");
   button.disabled = true;
   try {
-    const data = await api("/api/preferences", {method: "POST", body: JSON.stringify({general_audience: $("#generalAudience").checked})});
-    state.generalAudience = Boolean(data.general_audience);
+    const data = await api("/api/preferences", {method: "POST", body: JSON.stringify({content_mode: $("#contentMode").value})});
+    applyContentPreference(data);
+    window.AniShelfHome.reset();
     $("#detailDialog").close();
     $("#seriesDialog").close();
     await Promise.all([loadPublishers(), loadStats()]);
@@ -374,12 +385,14 @@ $("#preferencesForm").addEventListener("submit", async event => {
 });
 
 async function loadBooks(resetPage = false) {
+  const mode = state.contentMode;
   if (resetPage) state.offset = 0;
   const pageSizeChanged = syncBookPageSize();
   if (pageSizeChanged && !resetPage) {
     state.offset = Math.floor(state.offset / state.pageSize) * state.pageSize;
   }
   const data = await api(`/api/books?${bookParams()}`);
+  if (mode !== state.contentMode) return;
   state.books = data.items;
   state.totalBooks = data.total;
   const start = data.total ? state.offset + 1 : 0;
@@ -448,6 +461,7 @@ async function quickWishlist(bookId) {
 }
 
 async function openDetail(bookId, mode = state.view === "collection" ? "collection" : "wishlist") {
+  const contentMode = state.contentMode;
   if (bookId < 0) return openCustomCollection(-bookId);
   try {
     const [book, relatedData] = await Promise.all([
@@ -456,6 +470,7 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
       api(`/api/books/${bookId}/recommendations?limit=8`)
         .catch(() => ({items: [], unavailable: true})),
     ]);
+    if (contentMode !== state.contentMode) return;
     const related = relatedData.items || [];
     state.currentBook = book;
     state.detailMode = mode;
@@ -626,6 +641,7 @@ async function removeWishlist() {
 }
 
 async function loadSeries(resetPage = false) {
+  const mode = state.contentMode;
   if (resetPage) state.seriesOffset = 0;
   const params = new URLSearchParams({
     limit: String(state.seriesPageSize),
@@ -635,6 +651,7 @@ async function loadSeries(resetPage = false) {
   if (q) params.set("q", q);
   addPublisherParams(params);
   const data = await api(`/api/series?${params}`);
+  if (mode !== state.contentMode) return;
   state.series = data.items;
   state.totalSeries = data.total;
   const start = data.total ? state.seriesOffset + 1 : 0;
@@ -697,10 +714,12 @@ function openSeries(index) {
 }
 
 async function openSeriesByValues(publisher, title, mediaType) {
+  const mode = state.contentMode;
   if (!title) return;
   try {
     const params = new URLSearchParams({publisher, title, media_type: mediaType || ""});
     const series = await api(`/api/series/detail?${params}`);
+    if (mode !== state.contentMode) return;
     state.currentSeries = series;
     $("#seriesDetailContent").innerHTML = `<div class="series-detail">
       <p class="eyebrow">${escapeHtml(series.publisher_name)} · ${escapeHtml(typeLabels[series.media_type] || "未分類")}</p>
@@ -744,8 +763,10 @@ async function openSeriesByValues(publisher, title, mediaType) {
 }
 
 async function loadUpcoming() {
+  const mode = state.contentMode;
   const days = Number($("#upcomingDays").value);
   const data = await api(`/api/upcoming?days=${days}`);
+  if (mode !== state.contentMode) return;
   const groups = Object.groupBy ? Object.groupBy(data.items, item => item.release_date || "unknown") :
     data.items.reduce((result, item) => ((result[item.release_date || "unknown"] ||= []).push(item), result), {});
   $("#upcomingList").innerHTML = Object.entries(groups).map(([releaseDate, books]) => `<section class="timeline-day">
@@ -760,7 +781,9 @@ async function loadUpcoming() {
 }
 
 async function loadRecommendations() {
+  const mode = state.contentMode;
   const data = await api("/api/recommendations?limit=60");
+  if (mode !== state.contentMode) return;
   state.recommendations = data.items;
   state.recommendationSeries = data.series_prompts;
   renderRecommendations(data.purchased_count, data.followed_count);
