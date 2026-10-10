@@ -128,6 +128,7 @@ def current_user(cookie_header: str | None) -> dict[str, Any] | None:
                 "SELECT u.id, u.email, u.display_name, u.avatar_url, u.role, "
                 "s.csrf_token, s.expires_at, "
                 "COALESCE(up.general_audience, u.role <> 'admin') AS general_audience, "
+                "up.content_mode, "
                 "TIMESTAMPDIFF(MINUTE, s.last_seen_at, CURRENT_TIMESTAMP) >= %s AS should_touch "
                 "FROM user_sessions s JOIN users u ON u.id = s.user_id "
                 "LEFT JOIN user_preferences up ON up.user_id = u.id "
@@ -146,6 +147,8 @@ def current_user(cookie_header: str | None) -> dict[str, Any] | None:
     user["id"] = int(user["id"])
     user["is_admin"] = user["role"] == "admin"
     user["general_audience"] = bool(user.get("general_audience", user["role"] != "admin"))
+    from .preferences import content_mode, preference_values
+    user.update(preference_values(content_mode(user.get("content_mode"), user["general_audience"])))
     user.pop("expires_at", None)
     user.pop("should_touch", None)
     return user

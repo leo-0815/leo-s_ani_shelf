@@ -12,12 +12,13 @@ const assert = require("node:assert/strict");
     publisher_code:p.code,publisher_name:p.name,author:"作者",media_type:"novel",release_status:"available",
     release_date:"2026-10-04",edition_type:"standard",series_title:"系列"+n,wishlist_state:"wanted",is_owned:true,
     content_rating:p.code==="chingwin"?(n<15?"general":n<30?"restricted_18":"unknown"):"unknown",
+    bl_category:p.code==="chingwin" && n%2===1?"BL漫畫":"",
     rating_source:n<15?"publisher":"unknown",rating_confidence:n<15?100:0})));
-  let general = process.env.ANISHELF_UI_DEFAULT_ONLY === "1";
+  let mode = process.env.ANISHELF_UI_DEFAULT_ONLY === "1" ? "general" : "all";
   function filtered(params) {
     const codes = params.get("publishers");
-    return books.filter(b=>(!general || (b.content_rating!=="restricted_18" && (b.publisher_code!=="chingwin" ||
-      (b.content_rating==="general" && b.rating_source==="publisher" && b.rating_confidence===100)))) && (!codes || codes.split(",").includes(b.publisher_code)) &&
+    return books.filter(b=>(!['general','bl'].includes(mode) || b.content_rating!=="restricted_18") &&
+      (!['general','r18'].includes(mode) || !b.bl_category) && (!codes || codes.split(",").includes(b.publisher_code)) &&
       (!params.get("q") || b.title.includes(params.get("q"))));
   }
   await page.route("**/*", async route => {
@@ -25,17 +26,17 @@ const assert = require("node:assert/strict");
     const json=data=>route.fulfill({contentType:"application/json",body:JSON.stringify(data)});
     if (!p.startsWith("/api/")) {
       const file=p==="/"? "index.html":p.slice(1);
-      if (!["index.html","app.js","styles.css"].includes(file)) return route.fulfill({status:404,body:""});
-      return route.fulfill({path:path.join(__dirname,"..","web",file),contentType:{"index.html":"text/html","app.js":"text/javascript","styles.css":"text/css"}[file]});
+      if (!["index.html","app.js","home.js","guest.js","guest-ui.js","styles.css"].includes(file)) return route.fulfill({status:404,body:""});
+      return route.fulfill({path:path.join(__dirname,"..","web",file),contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html'});
     }
-    if(p==="/api/auth/me") return json({authenticated:true,user:{id:7,display_name:"測試",email:"test@example.test",is_admin:false,csrf_token:"fixture",general_audience:general}});
+    if(p==="/api/auth/me") return json({authenticated:true,user:{id:7,display_name:"測試",email:"test@example.test",is_admin:false,csrf_token:"fixture",content_mode:mode,general_audience:mode==='general'}});
     if(p==="/api/health") return json({ok:true,configured:true,version:"test"});
     if(p==="/api/preferences") {
-      if(req.method()==="POST") {general=req.postDataJSON().general_audience;assert.equal(typeof general,"boolean");}
-      return json({general_audience:general});
+      if(req.method()==="POST") {mode=req.postDataJSON().content_mode;assert.ok(['general','bl','r18','all'].includes(mode));}
+      return json({content_mode:mode,general_audience:mode==='general'});
     }
-    if(p==="/api/publishers") return json({items:publishers.map(b=>({...b,book_count:general&&b.code==="chingwin"?15:60}))});
-    if(p==="/api/stats") return json({total:general?315:360,scheduled:0,available:315,unknown:0,scheduled_undated:0,wishlist:1,followed_series:1,purchased:1,purchased_paper:1,purchased_digital:0,purchased_series:1,purchased_spend:0});
+    if(p==="/api/publishers") return json({items:publishers.map(b=>({...b,book_count:filtered(new URLSearchParams('publishers='+b.code)).length}))});
+    if(p==="/api/stats") return json({total:filtered(new URLSearchParams()).length,scheduled:0,available:315,unknown:0,scheduled_undated:0,wishlist:1,followed_series:1,purchased:1,purchased_paper:1,purchased_digital:0,purchased_series:1,purchased_spend:0});
     if(p==="/api/books" || p==="/api/series") {
       requests.push({path:p,params:new URLSearchParams(u.search)});
       const items=filtered(u.searchParams), offset=Number(u.searchParams.get("offset")||0), limit=Number(u.searchParams.get("limit")||100);
@@ -51,15 +52,15 @@ const assert = require("node:assert/strict");
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")||r.url().includes("/api/series?")), page.locator("#publisherApply").click()]);
   }
   try {
-    await page.goto("http://anishelf.test/");
+    await page.goto("http://anishelf.test/#library");
     await page.locator(".book-card").first().waitFor();
     if(process.env.ANISHELF_UI_DEFAULT_ONLY === "1") {
       await page.locator("#publisherSummary").click();
       assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),1);
       await page.locator("#publisherSummary").press("Escape");
       await page.locator('[data-view="preferences"]').click();
-      assert.equal(await page.locator("#generalAudience").isChecked(),true);
-      await page.locator("#generalAudience").uncheck();
+      assert.equal(await page.locator("#contentMode").inputValue(),'general');
+      await page.locator("#contentMode").selectOption('all');
       await Promise.all([page.waitForResponse(r=>r.url().includes("/api/publishers")),page.locator('#preferencesForm [type="submit"]').click()]);
       await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")),page.locator('[data-view="library"]').click()]);
       await page.locator("#publisherSummary").click();
@@ -94,22 +95,29 @@ const assert = require("node:assert/strict");
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")), page.locator("#publisherReset").click()]);
     assert.equal(latest().params.get("publishers"),null);
     await page.locator('[data-view="preferences"]').click();
-    await page.locator("#generalAudience").check();
+    await page.locator("#contentMode").selectOption('general');
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/publishers")), page.locator('#preferencesForm [type="submit"]').click()]);
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")), page.locator('[data-view="library"]').click()]);
     await page.locator("#publisherSummary").click();
     assert.equal(await page.locator('#publisherOptions input[value="chingwin"]').count(),1);
     await page.locator("#publisherSummary").press("Escape");
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")&&r.url().includes("q=")), page.locator("#searchInput").fill("青文")]);
-    assert.equal(await page.locator(".book-card").count(),15);
-    assert(filtered(new URLSearchParams("q=青文")).every(b=>b.content_rating==="general"&&b.rating_confidence===100));
+    assert.equal(await page.locator(".book-card").count(),23);
+    assert(filtered(new URLSearchParams("q=青文")).every(b=>b.content_rating!=="restricted_18"&&!b.bl_category));
+    for(const selected of ['bl','r18','all','general']) {
+      await page.locator('[data-view="preferences"]').click();
+      await page.locator('#contentMode').selectOption(selected);
+      await Promise.all([page.waitForResponse(r=>r.url().includes('/api/publishers')),page.locator('#preferencesForm [type="submit"]').click()]);
+      await Promise.all([page.waitForResponse(r=>r.url().includes('/api/books?')),page.locator('[data-view="library"]').click()]);
+      assert.equal(await page.locator('.book-card').count(),{general:23,bl:45,r18:30,all:60}[selected]);
+    }
     await page.reload();
     await page.locator('[data-view="preferences"]').click();
-    await page.locator("#generalAudience").waitFor();
-    assert.equal(await page.locator("#generalAudience").isChecked(),true);
+    await page.locator("#contentMode").waitFor();
+    assert.equal(await page.locator("#contentMode").inputValue(),'general');
     assert.equal(await page.locator('[data-view="preferences"]').evaluate(el=>el.classList.contains("active")),true);
-    if(process.env.ANISHELF_UI_SCREENSHOTS) await page.screenshot({path:path.join(__dirname,"..","logs","pr27-preferences.png"),fullPage:false});
-    await page.locator("#generalAudience").uncheck();
+    if(process.env.ANISHELF_UI_SCREENSHOTS) await page.screenshot({path:path.join(__dirname,"..","logs","pr45-content-modes.png"),fullPage:false});
+    await page.locator("#contentMode").selectOption('all');
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/publishers")), page.locator('#preferencesForm [type="submit"]').click()]);
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")), page.locator('[data-view="library"]').click()]);
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")), page.locator("#clearFilters").click()]);
@@ -121,6 +129,10 @@ const assert = require("node:assert/strict");
     await page.locator('#publisherOptions input[value="spp"]').check();
     await page.locator('#publisherOptions input[value="tongli"]').check();
     await Promise.all([page.waitForResponse(r=>r.url().includes("/api/books?")), page.locator("#publisherApply").click()]);
+    await page.locator('[data-view="preferences"]').click();
+    assert.equal(await page.locator('#contentMode option').count(),4);
+    assert.equal(await page.locator('#contentMode').evaluate(el=>el.getBoundingClientRect().right<=innerWidth),true);
+    if(process.env.ANISHELF_UI_SCREENSHOTS) await page.screenshot({path:path.join(__dirname,"..","logs","pr45-content-modes-mobile.png"),fullPage:false});
     assert.deepEqual(errors,[]);
     console.log("Filters UI OK: 1-5 publishers, none/all, page reset/persistence, series/wishlist/collection, saved general mode, restoration, mobile.");
   } finally { await browser.close(); }

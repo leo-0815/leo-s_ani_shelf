@@ -33,7 +33,7 @@ from .auth import (
 )
 from .collection import set_owned, remove_owned, save_custom, get_custom
 from .home import home_snapshot
-from .preferences import get_preferences, set_preferences, visibility_scope, publisher_visible
+from .preferences import get_preferences, set_preferences, visibility_scope, publisher_visible, content_mode, preference_values
 from .config import ROOT, get_settings
 from .catalog_sync import PROTOCOL_VERSION, ingest_catalog_books
 from .models import SYNC_HASH_VERSION
@@ -274,8 +274,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _authenticated_get(self, parsed: Any, user: dict[str, Any]) -> None:
         # Backups retain hidden records; browsing uses the account preference.
-        enabled = bool(user.get("general_audience")) and not parsed.path.startswith("/api/export.")
-        with visibility_scope(enabled):
+        mode = "all" if parsed.path.startswith("/api/export.") else content_mode(user.get("content_mode"), bool(user.get("general_audience")))
+        with visibility_scope(mode):
             self._visible_authenticated_get(parsed, user)
 
     def _visible_authenticated_get(self, parsed: Any, user: dict[str, Any]) -> None:
@@ -284,7 +284,7 @@ class Handler(BaseHTTPRequestHandler):
             if self._require_admin(user):
                 self._json(RESOURCES.snapshot())
         elif parsed.path == "/api/preferences":
-            self._json({"general_audience": bool(user.get("general_audience"))})
+            self._json(preference_values(content_mode(user.get("content_mode"), bool(user.get("general_audience")))))
         elif parsed.path == "/api/books":
             query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
             self._json(list_books(query, user_id, int(query.get("limit", "100")), int(query.get("offset", "0"))))

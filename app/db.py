@@ -261,6 +261,7 @@ def ensure_schema() -> None:
             _ensure_column(cursor, "books", "rating_checked_at", "DATETIME NULL")
             _ensure_column(cursor, "books", "rating_parser_version", "VARCHAR(40) NULL")
             _ensure_column(cursor, "books", "bl_category", "VARCHAR(100) NULL")
+            _ensure_column(cursor, "user_preferences", "content_mode", "VARCHAR(16) NULL")
             from .preferences import migrate_general_audience_default
             migrate_general_audience_default(cursor, cloud=True)
 

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from . import repository as repo
 from .abuse import RequestError
 from .db import transaction
-from .preferences import visibility_scope, visible_book_sql
+from .preferences import visibility_scope, visible_book_sql, content_mode
 
 COOKIE = "anishelf_guest"
 _KEY = secrets.token_bytes(32)  # Rotates on service restart; browser shelves do not.
@@ -50,6 +50,10 @@ def resolve_series(payload):
     rows = payload.get("series", [])
     after = payload.get("after", 0)
     general = payload.get("general", True)
+    try:
+        mode = content_mode(payload.get("content_mode"), general)
+    except ValueError as exc:
+        raise RequestError(str(exc)) from exc
     if not isinstance(rows, list) or not 1 <= len(rows) <= 20 or type(after) is not int or not 0 <= after < 10**18 or type(general) is not bool:
         raise RequestError("無效的系列查詢")
     conditions, values = [], []
@@ -58,7 +62,7 @@ def resolve_series(payload):
             raise RequestError("系列查詢格式錯誤")
         conditions.append("(p.code=%s AND b.series_key=%s AND b.media_type=%s)")
         values.extend([row["publisher"], row["series_key"], row["media_type"]])
-    with visibility_scope(general), transaction() as connection, connection.cursor() as cursor:
+    with visibility_scope(mode), transaction() as connection, connection.cursor() as cursor:
         cursor.execute("SELECT b.*,p.code AS publisher_code,p.name AS publisher_name FROM books b JOIN publishers p ON p.id=b.publisher_id WHERE (" + " OR ".join(conditions) + ") AND b.id>%s AND " + visible_book_sql() + " ORDER BY b.id LIMIT 201", [*values, after])
         rows = [public_book(repo.serialize_row(row)) for row in cursor.fetchall()]
     return {"items": rows[:200], "has_more": len(rows) > 200, "next_after_id": rows[min(len(rows), 200) - 1]["id"] if rows else after}
@@ -72,7 +76,11 @@ def public_get(path: str, query: dict[str, str]):
     general = query.get("general", "1")
     if general not in {"0", "1"}:
         raise RequestError("無效的瀏覽偏好")
-    with visibility_scope(general == "1"):
+    try:
+        mode = content_mode(query.get("content_mode"), general == "1")
+    except ValueError as exc:
+        raise RequestError(str(exc)) from exc
+    with visibility_scope(mode):
         # SQL `user_id = NULL` NEVER matches, including legacy rows. This is not
         # a shared user 0. A response allowlist also strips every private field.
         if path == "books":

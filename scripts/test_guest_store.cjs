@@ -40,6 +40,20 @@ async function transport(url,options={}){
 const write=(p,payload)=>guest.api(p,{method:'POST',body:JSON.stringify(payload)},transport);
 (async()=>{
   const initial=await guest.read();assert.equal(initial.preferences.general_audience,true);
+  assert.equal(initial.preferences.content_mode,'general');
+  for(const legacy of [true,false]) {
+    const old=guest.empty();old.preferences={general_audience:legacy};
+    assert.equal(guest.parseBackup(guest.backup(old)).preferences.content_mode,legacy?'general':'all');
+  }
+  for(const mode of ['general','bl','r18','all']) {
+    await write('/api/preferences',{content_mode:mode});
+    assert.equal((await guest.read()).preferences.content_mode,mode);
+    assert.equal(guest.parseBackup(guest.backup(await guest.read())).preferences.content_mode,mode);
+    await guest.api('/api/books/1',{},transport);
+    assert.equal(new URL(requests.at(-1)[0],'https://test.invalid').searchParams.get('content_mode'),mode);
+  }
+  await assert.rejects(write('/api/preferences',{content_mode:'invalid'}),/模式/);
+  await write('/api/preferences',{general_audience:true});
   const bad=guest.backup(initial);bad.data.books['__proto__']={id:1};
   // JSON parsed prototype-like keys are never accepted as book IDs.
   assert.throws(()=>guest.parseBackup(JSON.parse('{"format":"anishelf-guest","version":1,"data":{"version":1,"books":{"__proto__":{}},"wishlist":{},"collection":{},"custom":{},"follows":[],"dismissed":[]}}')),/識別碼/);
@@ -84,6 +98,26 @@ const write=(p,payload)=>guest.api(p,{method:'POST',body:JSON.stringify(payload)
   const separate=guest.empty();separate.follows=[{publisher:'test',series_key:'series',media_type:'novel',scope:'all'}];
   assert.equal(guest.decorate({...catalog[0],media_type:'manga'},separate).series_following,false);
   // Confirm a refreshed module (like a page reload) reads the same IDB state.
+  await write('/api/preferences',{content_mode:'all'});
+  let releaseOld, batchReads=0, started;
+  const firstBatch=new Promise(resolve=>started=resolve);
+  const delayed=async(url,options)=>{
+    if(new URL(url,'https://test.invalid').pathname==='/api/guest/book-batch') {
+      batchReads++;
+      if(batchReads===1) {started();await new Promise(resolve=>releaseOld=resolve);return {items:[{...catalog[0],content_rating:'restricted_18'}]};}
+      return {items:[]};
+    }
+    return transport(url,options);
+  };
+  const oldRefresh=guest.api('/api/books?collection=1',{},delayed);
+  await firstBatch;await write('/api/preferences',{content_mode:'general'});
+  const newRefresh=guest.api('/api/books?collection=1',{},delayed);
+  releaseOld();await oldRefresh;
+  const refreshed=await newRefresh;
+  assert.ok(refreshed.items.every(book=>book.id<0),'old all-mode refresh cannot restore hidden books after mode change');
+  assert.equal(refreshed.total,1,'private manual book remains visible');
+  assert.equal(batchReads,2);
+  assert.ok((await guest.read()).collection[1],'visibility change must preserve ownership');
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','web','guest.js'),'utf8'),context);
   assert.equal((await context.window.AniShelfGuest.read()).collection[1].notes,'KEEP');
   console.log('Guest transactional storage, independent ownership, tracking, privacy, backups and reload tests OK');
