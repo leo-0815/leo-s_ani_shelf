@@ -56,7 +56,9 @@ class ContentFilterTests(unittest.TestCase):
         visible = {'general': {1,5,7}, 'bl': {1,2,5,6,7,8},
                    'r18': {1,3,5,7}, 'all': set(range(1,9))}
         categories = {'': set(range(1,9)), 'general': {1,5,7}, 'bl': {2,4,6,8},
-                      'r18': {3,4}, 'bl_r18': {4}}
+                      'r18': {3,4}, 'bl_r18': {4}, 'bl,r18': {2,3,4,6,8},
+                      'general,bl': {1,2,4,5,6,7,8}, 'general,r18': {1,3,4,5,7},
+                      'general,bl,r18': set(range(1,9)), 'none': set()}
         for mode, allowed in visible.items():
             for category, candidates in categories.items():
                 for public in (False, True):
@@ -78,7 +80,8 @@ class ContentFilterTests(unittest.TestCase):
         self.assertEqual(self.query('all', {'content_filter': 'bl', 'publishers': 'none'})['total'], 0)
 
     def test_bad_categories_rejected_before_database(self):
-        for value in ('BL', 'male', "bl') OR 1=1 --", 'all', 'r18,bl'):
+        for value in ('BL', 'male', "bl') OR 1=1 --", 'all', 'bl,', 'bl,bl',
+                      'none,bl', 'general,bl,r18,bl_r18'):
             with self.subTest(value=value), self.assertRaises(RequestError):
                 validate_query(urlparse('/api/books?content_filter=' + value))
             with self.assertRaises(ValueError):
@@ -90,3 +93,5 @@ class ContentFilterTests(unittest.TestCase):
         self.assertIn('seed.bl_category', content_filter_sql('bl', 'seed'))
         self.assertNotIn('b.', content_filter_sql('r18', ''))
         validate_query(urlparse('/api/guest/books?content_filter=bl_r18'))
+        validate_query(urlparse('/api/guest/books?content_filter=r18,bl'))
+        self.assertEqual(content_filter_sql('none'), '1 = 0')

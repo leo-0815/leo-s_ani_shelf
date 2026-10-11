@@ -230,7 +230,8 @@ function applyContentPreference(data) {
   state.contentMode = data.content_mode || (data.general_audience ? "general" : "all");
   state.generalAudience = state.contentMode === "general";
   $("#contentMode").value = state.contentMode;
-  window.AniShelfContentFilters.render($("#contentFilter"), state.contentMode);
+  renderContentFilter();
+  $("#contentPicker").open = false;
   if (state.user) Object.assign(state.user, {content_mode: state.contentMode, general_audience: state.generalAudience});
 }
 
@@ -307,6 +308,30 @@ function reloadFilteredView() {
   return load().catch(error => toast(error.message, true));
 }
 
+function renderContentFilter() {
+  window.AniShelfContentFilters.render($("#contentFilter"), $("#contentOptions"), $("#contentSummary"), state.contentMode);
+}
+$("#contentPicker").addEventListener("toggle", () => {
+  if ($("#contentPicker").open) {
+    renderContentFilter();
+    $("#contentPicker .publisher-menu").scrollIntoView({block: "nearest", behavior: "instant"});
+  }
+});
+$("#contentSelectAll").addEventListener("click", () => $$("#contentOptions input").forEach(input => { input.checked = true; }));
+$("#contentSelectNone").addEventListener("click", () => $$("#contentOptions input").forEach(input => { input.checked = false; }));
+$("#contentApply").addEventListener("click", () => {
+  $("#contentFilter").value = window.AniShelfContentFilters.encode($$("#contentOptions input:checked").map(input => input.value), state.contentMode);
+  renderContentFilter();
+  $("#contentPicker").open = false;
+  reloadFilteredView();
+});
+$("#contentPicker").addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    $("#contentPicker").open = false;
+    $("#contentSummary").focus();
+  }
+});
+
 $("#publisherFilter").addEventListener("toggle", () => {
   if ($("#publisherFilter").open) renderPublisherOptions();
 });
@@ -328,6 +353,7 @@ $("#publisherReset").addEventListener("click", () => {
 });
 document.addEventListener("click", event => {
   if (!event.target.closest("#publisherFilter")) $("#publisherFilter").open = false;
+  if (!event.target.closest("#contentPicker")) $("#contentPicker").open = false;
 });
 $("#publisherFilter").addEventListener("keydown", event => {
   if (event.key === "Escape") {
@@ -1134,6 +1160,8 @@ function clearFilters(reload = true) {
   renderPublisherSummary();
   $("#publisherFilter").open = false;
   ["typeFilter", "contentFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => $(`#${id}`).value = "");
+  renderContentFilter();
+  $("#contentPicker").open = false;
   $("#searchInput").value = "";
   state.missingFilter = "";
   if (state.view === "collection") $("#sortFilter").value = "purchased_desc";
@@ -1171,7 +1199,8 @@ async function switchView(view, replace = false) {
   window.AniShelfSearchNavigation.mount(view);
   $("#wishlistStateFilter").classList.toggle("hidden", view !== "wishlist");
   $("#ownedFormatFilter").classList.toggle("hidden", view !== "collection");
-  $("#contentFilter").classList.toggle("hidden", view !== "library");
+  $("#contentPicker").classList.toggle("hidden", view !== "library");
+  $("#contentPicker").open = false;
   $("#collectionSummary").classList.toggle("hidden", view !== "collection");
   if (view !== "collection" && $("#sortFilter").value === "purchased_desc") $("#sortFilter").value = "";
   if (view === "collection" && !$("#sortFilter").value) $("#sortFilter").value = "purchased_desc";
