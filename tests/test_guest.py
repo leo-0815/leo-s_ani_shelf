@@ -43,7 +43,8 @@ class GuestIdentityTests(unittest.TestCase):
     def test_public_whitelist_never_passes_private_filters_or_user_zero(self, books):
         books.return_value = {'items': [{'id': 3, 'title': 'public', 'user_id': 99,
             'wishlist_notes': 'SECRET', 'collection': {'notes': 'SECRET'}, 'is_owned': True}], 'total': 1}
-        data = guest.public_get('books', {'collection': '1', 'wishlist': '1', 'user_id': '99', 'q': 'public'})
+        with patch('app.catalog_reconciliation.previous_ids',side_effect=lambda rows:rows):
+            data = guest.public_get('books', {'collection': '1', 'wishlist': '1', 'user_id': '99', 'q': 'public'})
         self.assertEqual(data['items'], [{'id': 3, 'title': 'public'}])
         self.assertEqual(books.call_args.args, ({'q': 'public'}, None, 100, 0))
 
@@ -165,6 +166,7 @@ class ImportTransactionTests(unittest.TestCase):
         CREATE TABLE users(id INTEGER PRIMARY KEY);
         CREATE TABLE publishers(id INTEGER PRIMARY KEY,code TEXT);
         CREATE TABLE books(id INTEGER PRIMARY KEY);
+        CREATE TABLE catalog_book_merges(old_book_id INTEGER PRIMARY KEY,canonical_book_id INTEGER);
         CREATE TABLE wishlist_items(user_id INTEGER,book_id INTEGER,state TEXT,priority INTEGER,
           owned_format TEXT,purchased_at TEXT,paid_price INTEGER,notes TEXT,store_name TEXT,order_number TEXT,UNIQUE(user_id,book_id));
         CREATE TABLE collection_items(id INTEGER PRIMARY KEY,user_id INTEGER,book_id INTEGER,

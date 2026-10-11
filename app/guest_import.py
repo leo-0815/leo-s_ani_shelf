@@ -74,6 +74,13 @@ def plan(cursor, user_id, data):
     cursor.execute("SELECT id,code FROM publishers")
     publishers = {row["code"]: int(row["id"]) for row in cursor.fetchall()}
     ids = sorted({row["book_id"] for section in ("wishlist", "collection") for row in data[section]})
+    if ids:
+        cursor.execute("SELECT old_book_id,canonical_book_id FROM catalog_book_merges WHERE old_book_id IN (" +
+                       ",".join(["%s"] * len(ids)) + ")", ids)
+        aliases = {int(r["old_book_id"]): int(r["canonical_book_id"]) for r in cursor.fetchall()}
+        data = {**data, **{section: [{**r, "book_id": aliases.get(r["book_id"], r["book_id"])}
+                                   for r in data[section]] for section in ("wishlist", "collection")}}
+        ids = sorted({r["book_id"] for section in ("wishlist", "collection") for r in data[section]})
     valid = set()
     if ids:
         cursor.execute("SELECT id FROM books WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")", ids)

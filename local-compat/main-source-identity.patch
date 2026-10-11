@@ -1,0 +1,162 @@
+diff --git a/app/catalog_sync.py b/app/catalog_sync.py
+index b0ac650..d2bb2f1 100644
+--- a/app/catalog_sync.py
++++ b/app/catalog_sync.py
+@@ -207,6 +207,7 @@ class CatalogSyncClient:
+         counts = {"inserted": 0, "updated": 0, "unchanged": 0, "received": 0}
+         cursor = int(state.get("last_pulled_change_id") or 0)
+         try:
++            self.pull_aliases()
+             if force_snapshot or first_sync:
+                 cursor = self._pull_snapshot(counts)
+             cursor = self._pull_changes(cursor, counts)
+@@ -254,6 +255,7 @@ class CatalogSyncClient:
+             counts["received"] += 1
+ 
+     def push(self) -> dict[str, int]:
++        self.pull_aliases()
+         state = get_catalog_peer_state("cloud")
+         cursor = int(state.get("last_pushed_change_id") or 0)
+         remote_hashes = {
+@@ -323,6 +325,7 @@ class CatalogSyncClient:
+ 
+     def push_manifest_differences(self) -> dict[str, int]:
+         """Upload local-only/richer rows after cloud-first reconciliation."""
++        self.pull_aliases()
+         difference = self.compare()
+         keys = [tuple(key) for key in difference["local_only"] + difference["different"]]
+         rows = [self._clean_outgoing(row) for row in catalog_rows_by_keys(keys)]
+@@ -338,6 +341,10 @@ class CatalogSyncClient:
+                 totals[key] += int(result.get(key, 0))
+         return totals
+ 
++    def pull_aliases(self) -> int:
++        from .catalog_alias_sync import pull_aliases
++        return pull_aliases(self, record_from_peer)
++
+ 
+ def compare_manifests(
+     local_items: Iterable[dict[str, Any]], remote_items: Iterable[dict[str, Any]]
+diff --git a/app/repository.py b/app/repository.py
+index cc73943..7bba999 100644
+--- a/app/repository.py
++++ b/app/repository.py
+@@ -93,6 +93,9 @@ def upsert_book(
+     with transaction() as connection:
+         publisher_id = get_publisher_id(connection, record.publisher_code)
+         with connection.cursor() as cursor:
++            if record.publisher_code == "chingwin":
++                cursor.execute("SELECT id FROM publishers WHERE id = %s FOR UPDATE", (publisher_id,))
++                cursor.fetchone()
+             _apply_series_alias_to_data(cursor, publisher_id, data)
+             cursor.execute(
+                 "SELECT * FROM books WHERE publisher_id = %s AND source_key = %s FOR UPDATE",
+@@ -100,13 +103,23 @@ def upsert_book(
+             )
+             existing = cursor.fetchone()
+             migrate_source_key = False
++            identity_method = "exact_key"
+             if existing is None and record.publisher_code == "chingwin":
+-                existing = _find_chingwin_schedule_row(
+-                    cursor,
+-                    publisher_id,
+-                    data,
+-                )
+-                migrate_source_key = existing is not None
++                from .book_identity import (resolve_alias, find_chingwin_match, chingwin_source_kind,
++                                            chingwin_product_id, compatible)
++                existing = resolve_alias(cursor, publisher_id, record.source_key)
++                identity_method = "source_alias"
++                if existing is not None and not compatible(existing, data):
++                    raise ValueError("書目來源對應的卷次或版本不符，需人工確認")
++                if existing is None:
++                    existing = find_chingwin_match(cursor, publisher_id, data)
++                    identity_method = "unique_identity"
++                migrate_source_key = (existing is not None
++                                      and chingwin_source_kind(data) == "product"
++                                      and data["source_key"] == chingwin_product_id(data)
++                                      and existing["source_key"] != data["source_key"]
++                                      and (chingwin_source_kind(existing) != "product"
++                                           or chingwin_product_id(existing) == chingwin_product_id(data)))
+             if existing is None and record.publisher_code == "tongli":
+                 existing = _find_tongli_matching_row(cursor, publisher_id, data)
+                 if existing is not None and _is_tongli_schedule(data):
+@@ -127,6 +140,9 @@ def upsert_book(
+                     values,
+                 )
+                 book_id = int(cursor.lastrowid)
++                if record.publisher_code == "chingwin":
++                    from .book_identity import remember_alias
++                    remember_alias(cursor, publisher_id, book_id, data, "inserted")
+                 from .series_follow import add_discovered_book
+                 add_discovered_book(cursor, book_id, publisher_id, data.get("series_key") or "",
+                                     data["media_type"], data["release_status"], cloud=False)
+@@ -140,11 +156,20 @@ def upsert_book(
+                 )
+                 return "inserted"
+ 
++            if record.publisher_code == "chingwin":
++                from .book_identity import remember_alias, chingwin_product_id
++                old_product_id, new_product_id = chingwin_product_id(existing), chingwin_product_id(data)
++                if old_product_id and new_product_id and old_product_id != new_product_id:
++                    raise ValueError("書目來源對應的商品碼不符，需人工確認")
++                remember_alias(cursor, publisher_id, int(existing["id"]), existing, "canonical")
++                remember_alias(cursor, publisher_id, int(existing["id"]), data, identity_method)
+             write_data = (
+                 _sync_write_data(existing, data)
+                 if change_origin in {"cloud_pull", "sync_upload"}
+                 else _crawler_write_data(existing, data)
+             )
++            if record.publisher_code == "chingwin" and not migrate_source_key:
++                write_data["source_key"] = existing["source_key"]
+             write_data["source_hash"] = book_content_hash(write_data)
+             if existing["source_hash"] == write_data["source_hash"]:
+                 cursor.execute(
+@@ -219,6 +244,9 @@ def _apply_series_alias_to_data(
+ 
+ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+     result = dict(data)
++    if data.get("publisher_code") == "chingwin":
++        from .book_identity import merge_chingwin_metadata
++        result = merge_chingwin_metadata(existing, result)
+     from .release_dates import merge_release_fields
+     result = merge_release_fields(existing, result)
+     from .rating_merge import merge_rating_fields
+diff --git a/app/schema.sql b/app/schema.sql
+index 4e9dee1..e49859c 100644
+--- a/app/schema.sql
++++ b/app/schema.sql
+@@ -67,6 +67,32 @@ CREATE TABLE IF NOT EXISTS books (
+     CONSTRAINT fk_books_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+ 
++CREATE TABLE IF NOT EXISTS book_source_aliases (
++    publisher_id BIGINT UNSIGNED NOT NULL,
++    alias_key VARCHAR(190) NOT NULL,
++    book_id BIGINT UNSIGNED NOT NULL,
++    source_kind VARCHAR(20) NOT NULL,
++    match_method VARCHAR(30) NOT NULL,
++    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    PRIMARY KEY (publisher_id, alias_key),
++    KEY idx_book_aliases_book (book_id),
++    CONSTRAINT fk_book_alias_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id),
++    CONSTRAINT fk_book_alias_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
++
++CREATE TABLE IF NOT EXISTS catalog_book_merges (
++    old_book_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
++    canonical_book_id BIGINT UNSIGNED NOT NULL,
++    old_book_json JSON NOT NULL,
++    canonical_before_json JSON NOT NULL,
++    references_json JSON NOT NULL,
++    aliases_json JSON NOT NULL,
++    canonical_after_hash CHAR(64) NULL,
++    merged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    KEY idx_catalog_merge_canonical (canonical_book_id),
++    CONSTRAINT fk_catalog_merge_canonical FOREIGN KEY (canonical_book_id) REFERENCES books(id)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
++
+ CREATE TABLE IF NOT EXISTS book_release_checks (
+     book_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+     attempted_at DATETIME NOT NULL,
+

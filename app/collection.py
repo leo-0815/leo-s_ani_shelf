@@ -57,6 +57,8 @@ def save_owned(cursor: Any, user_id: int, book_id: int, payload: dict[str, Any])
 def set_owned(user_id: int, book_id: int, payload: dict[str, Any]) -> None:
     with transaction() as connection:
         with connection.cursor() as cursor:
+            from .catalog_reconciliation import resolve_book_id
+            book_id = resolve_book_id(cursor, book_id)
             save_owned(cursor, user_id, book_id, payload)
             if "follow_series" in payload:
                 from .series_follow import follow_for_book

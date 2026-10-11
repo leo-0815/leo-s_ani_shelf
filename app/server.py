@@ -497,6 +497,20 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/guest/"):
                 self._json({"error": "訪客私人資料只能保存在瀏覽器"}, HTTPStatus.FORBIDDEN)
                 return
+            if parsed.path == "/api/catalog-sync/reconcile":
+                if not self._require_catalog_sync():
+                    return
+                from .catalog_reconciliation import preview, apply_pairs
+                payload = self._body()
+                if payload.get("action") == "preview":
+                    result = preview(after_id=payload.get("after_id", 0))
+                elif payload.get("action") == "apply":
+                    result = apply_pairs(payload.get("pairs"))
+                    RESOURCES.invalidate()
+                else:
+                    raise ValueError("無效的整併操作")
+                self._json({"protocol_version": PROTOCOL_VERSION, **result})
+                return
             if parsed.path == "/api/catalog-sync/books":
                 if not self._require_catalog_sync():
                     return
@@ -820,9 +834,14 @@ class Handler(BaseHTTPRequestHandler):
                     "protocol_version": PROTOCOL_VERSION,
                     "sync_hash_version": SYNC_HASH_VERSION,
                     "audience_classification_version": 1,
+                    "source_aliases_version": 1,
                     **catalog_sync_status(),
                 }
             )
+        elif parsed.path == "/api/catalog-sync/aliases":
+            from .catalog_reconciliation import alias_page
+            self._json({"protocol_version": PROTOCOL_VERSION,
+                        **alias_page(int(query.get("after_id", "0")), int(query.get("limit", "100")))})
         elif parsed.path == "/api/catalog-sync/manifest":
             self._json(
                 {

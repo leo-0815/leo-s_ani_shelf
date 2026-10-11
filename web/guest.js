@@ -47,7 +47,7 @@ window.AniShelfGuest = (() => {
         if (name === "books") {
           if (row.id !== Number(key) || typeof row.title !== "string" || row.title.length > 500) throw new Error("書目資料錯誤");
           // A snapshot contains public metadata only, never another account's fields.
-          const fields = "id title normalized_title series_title series_key volume_label edition_type media_type content_rating bl_category author isbn cover_url list_price release_date release_precision release_status release_date_source release_checked_at release_checked_at_utc release_display_status first_seen_at updated_at source_url publisher_code publisher_name".split(" ");
+          const fields = "id canonical_book_id title normalized_title series_title series_key volume_label edition_type media_type content_rating bl_category author isbn cover_url list_price release_date release_precision release_status release_date_source release_checked_at release_checked_at_utc release_display_status first_seen_at updated_at source_url publisher_code publisher_name".split(" ");
           const book = {};
           for (const field of fields) {
             const value = row[field];
@@ -174,7 +174,8 @@ window.AniShelfGuest = (() => {
           for (const book of Object.values(books)) {
             if (seriesKey(book)!==seriesKey(follow) || book.release_status==="cancelled" || (follow.scope==="future" && book.release_status!=="scheduled") || seen.has(book.id)) continue;
             seen.add(book.id);
-            if (!latest.collection[book.id] && !latest.wishlist[book.id]) latest.wishlist[book.id]={...ownership({}),state:"wanted",priority:0};
+            const id=localBookId(book,latest);
+            if (!latest.collection[id] && !latest.wishlist[id]) latest.wishlist[id]={...ownership({}),state:"wanted",priority:0};
           }
           follow.seen=[...seen];
         }
@@ -184,8 +185,16 @@ window.AniShelfGuest = (() => {
     })().finally(()=>refreshPromise=null);
     return refreshPromise;
   }
+  function localBookId(book,data) {
+    const possible=[book.id,...(book.previous_ids || []),
+      ...Object.values(data.books).filter(row=>row.canonical_book_id===book.id).map(row=>row.id)];
+    return possible.find(id=>data.wishlist[id] || data.collection[id]) ?? book.id;
+  }
   function decorate(book,data) {
-    const b={...book}, wish=data.wishlist[b.id], owned=data.collection[b.id];
+    const b={...book};
+    const id=localBookId(book,data);
+    if (id !== undefined && id !== b.id) {b.canonical_book_id=b.id; b.id=id;}
+    const wish=data.wishlist[b.id], owned=data.collection[b.id];
     const follow=data.follows.find(row=>seriesKey(row)===seriesKey(b));
     Object.assign(b,{wishlist_state:wish?.state || null,is_owned:Boolean(owned),collection_id:owned?.id || null,collection:owned || null,series_follow_scope:follow?.scope || "",series_following:Boolean(follow)});
     if (wish) Object.assign(b,{wishlist_notes:wish.notes,wishlist_priority:wish.priority,wishlist_store:wish.store_name,wishlist_order_number:wish.order_number,wishlist_paid_price:wish.paid_price,wishlist_format:wish.owned_format,wishlist_purchased_at:wish.purchased_at});
