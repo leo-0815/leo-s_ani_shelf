@@ -9,6 +9,7 @@ function element() {
   return {textContent:'', innerHTML:'', value:'', open:false, dataset:{}, events:{},
     classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),toggle:(x,on)=>on?classes.add(x):classes.delete(x),contains:x=>classes.has(x)},
     addEventListener(event, fn){this.events[event]=fn}, setAttribute(){}, focus(){this.focused=true},
+    appendChild(child){child.parentElement=this}, scrollIntoView(){this.scrolled=true}, getBoundingClientRect(){return {top:0,bottom:30,height:30}},
     querySelectorAll(){return []}};
 }
 
@@ -19,7 +20,7 @@ function element() {
   const views = ['home','library','series','upcoming','wishlist','collection','recommendations','notifications','preferences','quality','sources'];
   const nav = views.map(view => Object.assign(element(),{dataset:{view},textContent:view}));
   const sections = views.filter(x=>!['wishlist','collection'].includes(x)).map(x=>get(x+'View'));
-  const document = {getElementById:get, querySelector:s=>get(s.replace(/^#/,'')),
+  const document = {getElementById:get, querySelector:s=>s==='dialog[open]'?null:get(s.replace(/^#/,'')),
     querySelectorAll:s=>s==='.nav-item'?nav:s==='.view-section'?sections:[], addEventListener:(e,f)=>events[e]=f};
   const location={hash:''};
   const history={pushState:(a,b,url)=>{historyCalls.push(['push',url]);location.hash=url},replaceState:(a,b,url)=>{historyCalls.push(['replace',url]);location.hash=url}};
@@ -27,6 +28,7 @@ function element() {
     console,Intl,Date,URLSearchParams,Set,setTimeout,clearTimeout,setInterval,clearInterval,requests});
   vm.runInContext(fs.readFileSync(path.join(root,'web/home.js'),'utf8'),ctx);
   vm.runInContext(fs.readFileSync(path.join(root,'web/content-filters.js'),'utf8'),ctx);
+  vm.runInContext(fs.readFileSync(path.join(root,'web/search-navigation.js'),'utf8'),ctx);
   let source=fs.readFileSync(path.join(root,'web/app.js'),'utf8');
   source=source.slice(0,source.lastIndexOf('\nloadAll()'));
   vm.runInContext(source,ctx);
@@ -43,6 +45,10 @@ function element() {
   assert.deepEqual(requests.slice(1),['publishers','stats','books']);
   assert.equal(historyCalls.at(-1)[0],'push');
   assert.equal(get('catalogStats').classList.contains('hidden'),false);
+  assert.equal(get('pageTitle').textContent,'書目查詢');
+  assert.equal(document.title,'書目查詢｜AniShelf');
+  assert.equal(get('searchBox').parentElement,get('catalogSearchSlot'));
+  assert.equal(get('catalogSearchTools').classList.contains('is-search-docked'),true);
   location.hash='#home'; await events.hashchange();
   assert.equal(get('homeView').classList.contains('hidden'),false);
   get('homeSearchInput').value='  部分書名  ';
@@ -79,6 +85,8 @@ function element() {
   get('contentFilter').value='general';ctx.clearFilters(false);
   assert.equal(get('contentFilter').value,'');
   await ctx.switchView('wishlist');
+  assert.equal(get('searchBox').parentElement,get('headerSearchSlot'));
+  assert.equal(get('catalogSearchTools').classList.contains('is-search-docked'),false);
   assert.equal(get('contentFilter').classList.contains('hidden'),true);
   await ctx.switchView('library');
   assert.equal(get('contentFilter').classList.contains('hidden'),false);
