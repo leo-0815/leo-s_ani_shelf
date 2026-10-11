@@ -23,6 +23,7 @@ const db={createObjectStore(){},close(){},transaction(_name,mode){
 }};
 const indexedDB={open(){const req={};queueMicrotask(()=>{req.result=db;req.onupgradeneeded?.();req.onsuccess?.();});return req;}};
 const context=vm.createContext({window:{indexedDB},indexedDB,URL,URLSearchParams,Intl,Date,Set,Map,JSON,Number,Promise});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'..','web','content-filters.js'),'utf8'),context);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'..','web','guest.js'),'utf8'),context);
 const guest=context.window.AniShelfGuest;
 const catalog=[1,2,3].map(id=>({id,title:'測試書 '+id,series_title:'測試書',series_key:'series',publisher_code:'test',publisher_name:'測試出版社',media_type:'novel',release_status:id===3?'scheduled':'available',release_date:'2026-10-20',release_precision:'day',content_rating:'general',bl_category:''}));

@@ -99,6 +99,12 @@ def validate_query(parsed) -> None:
     sorts = {"", "release_asc", "title_asc", "added_desc", "updated_desc", "purchased_desc"}
     if "sort" in query and query["sort"][0] not in sorts:
         raise RequestError("不支援的排序")
+    if "content_filter" in query:
+        from .filters import content_filter_sql
+        try:
+            content_filter_sql(query["content_filter"][0])
+        except ValueError as exc:
+            raise RequestError(str(exc)) from exc
 
 
 def csv_cell(value):

@@ -26,6 +26,7 @@ function element() {
   const ctx=vm.createContext({document,window:{addEventListener:(e,f)=>events[e]=f,AniShelfGuestUi:{init(){},offer:async()=>{}}},location,history,
     console,Intl,Date,URLSearchParams,Set,setTimeout,clearTimeout,setInterval,clearInterval,requests});
   vm.runInContext(fs.readFileSync(path.join(root,'web/home.js'),'utf8'),ctx);
+  vm.runInContext(fs.readFileSync(path.join(root,'web/content-filters.js'),'utf8'),ctx);
   let source=fs.readFileSync(path.join(root,'web/app.js'),'utf8');
   source=source.slice(0,source.lastIndexOf('\nloadAll()'));
   vm.runInContext(source,ctx);
@@ -67,5 +68,19 @@ function element() {
   assert.equal((shortcuts.match(/<a href="#/g)||[]).length,6);
   requests.length=0;location.hash='#library';await ctx.loadAll();
   assert.equal(location.hash,'#library');assert.deepEqual(requests,['books']);
+  vm.runInContext("state.view='library'",ctx);
+  ctx.applyContentPreference({content_mode:'all'});
+  get('contentFilter').value='bl';
+  assert.equal(ctx.bookParams().get('content_filter'),'bl');
+  vm.runInContext("state.view='collection'",ctx);
+  assert.equal(ctx.bookParams().has('content_filter'),false,'library filter must not silently filter private shelves');
+  ctx.applyContentPreference({content_mode:'general'});
+  assert.equal(get('contentFilter').value,'','changing preferences clears a now-disallowed filter');
+  get('contentFilter').value='general';ctx.clearFilters(false);
+  assert.equal(get('contentFilter').value,'');
+  await ctx.switchView('wishlist');
+  assert.equal(get('contentFilter').classList.contains('hidden'),true);
+  await ctx.switchView('library');
+  assert.equal(get('contentFilter').classList.contains('hidden'),false);
   console.log('Home UI/routing tests OK ('+(cloud?'cloud':'local')+')');
 })().catch(e=>{console.error(e);process.exit(1)});

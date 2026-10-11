@@ -70,7 +70,7 @@ def resolve_series(payload):
 
 
 def public_get(path: str, query: dict[str, str]):
-    allowed = {"q", "publisher", "publishers", "media_type", "status", "edition", "date_from", "date_to", "sort", "limit", "offset", "missing"}
+    allowed = {"q", "publisher", "publishers", "media_type", "status", "edition", "date_from", "date_to", "sort", "limit", "offset", "missing", "content_filter"}
     filters = {key: value for key, value in query.items() if key in allowed}
     if filters.get("sort") == "purchased_desc":
         filters.pop("sort")
