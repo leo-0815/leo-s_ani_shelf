@@ -4,6 +4,25 @@ import re
 from typing import Any
 
 
+CONTENT_FILTERS = frozenset({"", "general", "bl", "r18", "bl_r18"})
+
+
+def content_filter_sql(value: str = "", alias: str = "b") -> str:
+    """Narrow the visible catalog; never replaces the account visibility scope."""
+    if not isinstance(value, str) or value not in CONTENT_FILTERS:
+        raise ValueError("無效的內容分類篩選")
+    prefix = f"{alias}." if alias else ""
+    bl = f"COALESCE({prefix}bl_category, '') <> ''"
+    r18 = f"COALESCE({prefix}content_rating, 'unknown') = 'restricted_18'"
+    return {
+        "": "1 = 1",
+        "general": f"(NOT ({bl}) AND NOT ({r18}))",
+        "bl": f"({bl})",
+        "r18": f"({r18})",
+        "bl_r18": f"({bl} AND {r18})",
+    }[value]
+
+
 def add_publisher_filter(filters: dict[str, str], where: list[str], values: list[Any], *, private_book_column: str | None = None) -> None:
     """Shared catalog filter; legacy publisher=code remains supported.
 
@@ -13,6 +32,8 @@ def add_publisher_filter(filters: dict[str, str], where: list[str], values: list
     from .preferences import visible_publisher_sql
     visibility = visible_publisher_sql()
     where.append(f"({private_book_column} IS NULL OR {visibility})" if private_book_column else visibility)
+    if filters.get("content_filter"):
+        where.append(content_filter_sql(filters["content_filter"]))
     raw = filters.get("publishers", filters.get("publisher", ""))
     if not raw:
         return

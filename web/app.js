@@ -230,6 +230,7 @@ function applyContentPreference(data) {
   state.contentMode = data.content_mode || (data.general_audience ? "general" : "all");
   state.generalAudience = state.contentMode === "general";
   $("#contentMode").value = state.contentMode;
+  window.AniShelfContentFilters.render($("#contentFilter"), state.contentMode);
   if (state.user) Object.assign(state.user, {content_mode: state.contentMode, general_audience: state.generalAudience});
 }
 
@@ -341,12 +342,14 @@ function bookParams() {
   if (q) params.set("q", q);
   const mappings = [
     ["typeFilter", "media_type"],
+    ["contentFilter", "content_filter"],
     ["statusFilter", "status"], ["editionFilter", "edition"],
     ["sortFilter", "sort"], ["wishlistStateFilter", "wishlist_state"],
     ["ownedFormatFilter", "owned_format"],
     ["dateFromFilter", "date_from"], ["dateToFilter", "date_to"],
   ];
   mappings.forEach(([id, key]) => {
+    if (id === "contentFilter" && state.view !== "library") return;
     if (id === "wishlistStateFilter" && state.view !== "wishlist") return;
     if (id === "ownedFormatFilter" && state.view !== "collection") return;
     if ($(`#${id}`).value) params.set(key, $(`#${id}`).value);
@@ -386,13 +389,14 @@ $("#preferencesForm").addEventListener("submit", async event => {
 
 async function loadBooks(resetPage = false) {
   const mode = state.contentMode;
+  const contentSelection = $("#contentFilter").value;
   if (resetPage) state.offset = 0;
   const pageSizeChanged = syncBookPageSize();
   if (pageSizeChanged && !resetPage) {
     state.offset = Math.floor(state.offset / state.pageSize) * state.pageSize;
   }
   const data = await api(`/api/books?${bookParams()}`);
-  if (mode !== state.contentMode) return;
+  if (mode !== state.contentMode || contentSelection !== $("#contentFilter").value) return;
   state.books = data.items;
   state.totalBooks = data.total;
   const start = data.total ? state.offset + 1 : 0;
@@ -1129,7 +1133,7 @@ function clearFilters(reload = true) {
   renderPublisherOptions();
   renderPublisherSummary();
   $("#publisherFilter").open = false;
-  ["typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => $(`#${id}`).value = "");
+  ["typeFilter", "contentFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => $(`#${id}`).value = "");
   $("#searchInput").value = "";
   state.missingFilter = "";
   if (state.view === "collection") $("#sortFilter").value = "purchased_desc";
@@ -1166,6 +1170,7 @@ async function switchView(view, replace = false) {
   $("#searchBox").classList.toggle("hidden", !["library", "wishlist", "collection", "series"].includes(view));
   $("#wishlistStateFilter").classList.toggle("hidden", view !== "wishlist");
   $("#ownedFormatFilter").classList.toggle("hidden", view !== "collection");
+  $("#contentFilter").classList.toggle("hidden", view !== "library");
   $("#collectionSummary").classList.toggle("hidden", view !== "collection");
   if (view !== "collection" && $("#sortFilter").value === "purchased_desc") $("#sortFilter").value = "";
   if (view === "collection" && !$("#sortFilter").value) $("#sortFilter").value = "purchased_desc";
@@ -1193,7 +1198,7 @@ $("#searchInput").addEventListener("input", () => {
     load().catch(error => toast(error.message, true));
   }, 280);
 });
-["typeFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => {
+["typeFilter", "contentFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"].forEach(id => {
   $(`#${id}`).addEventListener("change", () => {
     const load = state.view === "series" ? () => loadSeries(true) : () => loadBooks(true);
     load().catch(error => toast(error.message, true));

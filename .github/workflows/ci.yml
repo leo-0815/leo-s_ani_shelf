@@ -25,6 +25,8 @@ jobs:
       - run: node --check web/home.js
       - run: node --check web/guest.js
       - run: node --check web/guest-ui.js
+      - run: node --check web/content-filters.js
+      - run: node scripts/test_content_filters.cjs
       - run: node scripts/test_guest_store.cjs
       - run: node scripts/test_guest_ui.cjs
       - run: node scripts/test_home_ui.cjs

@@ -209,6 +209,7 @@ window.AniShelfGuest = (() => {
   function filterBooks(items,params) {
     const q=(params.get("q") || "").normalize("NFKC").toLowerCase().split(/\s+/).filter(Boolean);
     let rows=items.filter(book=>q.every(term=>[book.title,book.author,book.isbn,book.series_title].some(v=>String(v||"").normalize("NFKC").toLowerCase().includes(term))));
+    if (params.get("content_filter")) rows=rows.filter(book=>window.AniShelfContentFilters.matches(book,params.get("content_filter")));
     const publishers=params.get("publishers") || params.get("publisher");
     if (publishers) rows=rows.filter(book=>publishers.split(",").includes(book.publisher_code));
     for (const [key,field] of [["media_type","media_type"],["edition","edition_type"],["wishlist_state","wishlist_state"]]) if (params.get(key)) rows=rows.filter(book=>book[field]===params.get(key));

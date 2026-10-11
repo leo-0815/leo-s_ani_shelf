@@ -148,6 +148,9 @@
               <select id="typeFilter" aria-label="類型">
                 <option value="">漫畫與小說</option><option value="manga">漫畫</option><option value="novel">輕小說</option>
               </select>
+              <select id="contentFilter" aria-label="內容分類" title="只篩選目前偏好允許的內容；未確認分類的書仍可能出現">
+                <option value="">所有可見內容</option><option value="general">一般向（非 BL／R18）</option><option value="bl">BL</option><option value="r18">R18</option><option value="bl_r18">BL 且 R18</option>
+              </select>
               <select id="statusFilter" aria-label="上市狀態">
                 <option value="">所有狀態</option><option value="scheduled">預定出版</option><option value="scheduled_undated">官方預定・日期未公布</option><option value="available">已到上市日（日期推算）</option><option value="unknown">資料缺日期</option>
               </select>
@@ -381,6 +384,7 @@
     <div class="toast hidden" id="toast" role="status"></div>
     <dialog id="guestImportDialog" class="prompt-dialog" aria-labelledby="guestImportTitle"><div class="prompt-content" id="guestImportContent"></div></dialog>
     <script src="/home.js" defer></script>
+    <script src="/content-filters.js" defer></script>
     <script src="/guest.js" defer></script>
     <script src="/guest-ui.js" defer></script>
     <script src="/app.js" defer></script>
