@@ -85,6 +85,11 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
     with transaction() as connection:
         publisher_id = get_publisher_id(connection, record.publisher_code)
         with connection.cursor() as cursor:
+            if record.publisher_code == "chingwin":
+                # Serialize this publisher's identity lookup + insert, including
+                # concurrent crawler and catalog-sync uploads with different keys.
+                cursor.execute("SELECT id FROM publishers WHERE id = %s FOR UPDATE", (publisher_id,))
+                cursor.fetchone()
             _apply_series_alias_to_data(cursor, publisher_id, data)
             cursor.execute(
                 "SELECT * FROM books WHERE publisher_id = %s AND source_key = %s FOR UPDATE",
@@ -92,13 +97,23 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
             )
             existing = cursor.fetchone()
             migrate_source_key = False
+            identity_method = "exact_key"
             if existing is None and record.publisher_code == "chingwin":
-                existing = _find_chingwin_schedule_row(
-                    cursor,
-                    publisher_id,
-                    data,
-                )
-                migrate_source_key = existing is not None
+                from .book_identity import (resolve_alias, find_chingwin_match, chingwin_source_kind,
+                                            chingwin_product_id, compatible)
+                existing = resolve_alias(cursor, publisher_id, record.source_key)
+                identity_method = "source_alias"
+                if existing is not None and not compatible(existing, data):
+                    raise ValueError("書目來源對應的卷次或版本不符，需人工確認")
+                if existing is None:
+                    existing = find_chingwin_match(cursor, publisher_id, data)
+                    identity_method = "unique_identity"
+                migrate_source_key = (existing is not None
+                                      and chingwin_source_kind(data) == "product"
+                                      and data["source_key"] == chingwin_product_id(data)
+                                      and existing["source_key"] != data["source_key"]
+                                      and (chingwin_source_kind(existing) != "product"
+                                           or chingwin_product_id(existing) == chingwin_product_id(data)))
             if existing is None and record.publisher_code == "tongli":
                 existing = _find_tongli_matching_row(cursor, publisher_id, data)
                 if existing is not None and _is_tongli_schedule(data):
@@ -119,6 +134,9 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
                     values,
                 )
                 book_id = int(cursor.lastrowid)
+                if record.publisher_code == "chingwin":
+                    from .book_identity import remember_alias
+                    remember_alias(cursor, publisher_id, book_id, data, "inserted")
                 from .series_follow import add_discovered_book
                 add_discovered_book(cursor, book_id, publisher_id, data.get("series_key") or "",
                                     data["media_type"], data["release_status"], cloud=True)
@@ -132,11 +150,20 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
                 )
                 return "inserted"
 
+            if record.publisher_code == "chingwin":
+                from .book_identity import remember_alias, chingwin_product_id
+                old_product_id, new_product_id = chingwin_product_id(existing), chingwin_product_id(data)
+                if old_product_id and new_product_id and old_product_id != new_product_id:
+                    raise ValueError("書目來源對應的商品碼不符，需人工確認")
+                remember_alias(cursor, publisher_id, int(existing["id"]), existing, "canonical")
+                remember_alias(cursor, publisher_id, int(existing["id"]), data, identity_method)
             write_data = (
                 _sync_write_data(existing, data)
                 if change_origin in {"cloud_pull", "sync_upload"}
                 else _crawler_write_data(existing, data)
             )
+            if record.publisher_code == "chingwin" and not migrate_source_key:
+                write_data["source_key"] = existing["source_key"]
             write_data["source_hash"] = book_content_hash(write_data)
             if existing["source_hash"] == write_data["source_hash"]:
                 cursor.execute(
@@ -212,6 +239,9 @@ def _apply_series_alias_to_data(
 def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     """Keep an administrator's rating while still accepting fresh publisher metadata."""
     result = dict(data)
+    if data.get("publisher_code") == "chingwin":
+        from .book_identity import merge_chingwin_metadata
+        result = merge_chingwin_metadata(existing, result)
     from .release_dates import merge_release_fields
     result = merge_release_fields(existing, result)
     from .rating_merge import merge_rating_fields
@@ -341,32 +371,6 @@ def _as_text(value: Any) -> str | None:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
     return str(value)
-
-
-def _find_chingwin_schedule_row(
-    cursor: Any,
-    publisher_id: int,
-    data: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Reconcile old monthly-schedule hashes with stable catalog product codes."""
-    cursor.execute(
-        "SELECT * FROM books WHERE publisher_id = %s AND normalized_title = %s "
-        "AND media_type = %s FOR UPDATE",
-        (publisher_id, data["normalized_title"], data["media_type"]),
-    )
-    candidates = cursor.fetchall()
-    compatible: list[dict[str, Any]] = []
-    new_date = data.get("release_date")
-    for candidate in candidates:
-        old_date = candidate.get("release_date")
-        if old_date and new_date:
-            if candidate.get("release_precision") == "month":
-                if (old_date.year, old_date.month) != (new_date.year, new_date.month):
-                    continue
-            elif old_date != new_date:
-                continue
-        compatible.append(candidate)
-    return compatible[0] if len(compatible) == 1 else None
 
 
 def _is_tongli_schedule(data: dict[str, Any]) -> bool:
