@@ -57,6 +57,11 @@ button, select { cursor: pointer; }
 .publisher-menu input { accent-color: var(--coral); width: 16px; height: 16px; }
 .publisher-menu .primary { width: 100%; }
 .publisher-picker summary:focus-visible { outline: 2px solid var(--coral); outline-offset: 3px; }
+.content-picker { align-self: center; }
+.content-picker[open] { z-index: 6; }
+.content-picker summary { padding: 9px 12px; }
+.content-picker .publisher-menu { width: min(230px, calc(100vw - 48px)); max-height: min(350px, calc(100dvh - 180px)); overflow-y: auto; scroll-margin-top: 150px; scroll-margin-bottom: 90px; }
+@media (max-width: 600px) { .content-picker .publisher-menu { left: auto; right: 0; } }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 @media (max-width: 600px) { .catalog-filter-bar { gap: 8px; } .catalog-filter-bar > small { flex-basis: 100%; order: 2; } }
 

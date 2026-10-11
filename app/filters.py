@@ -4,23 +4,30 @@ import re
 from typing import Any
 
 
-CONTENT_FILTERS = frozenset({"", "general", "bl", "r18", "bl_r18"})
+CONTENT_FILTERS = frozenset({"general", "bl", "r18", "bl_r18"})
 
 
 def content_filter_sql(value: str = "", alias: str = "b") -> str:
     """Narrow the visible catalog; never replaces the account visibility scope."""
-    if not isinstance(value, str) or value not in CONTENT_FILTERS:
+    if not isinstance(value, str):
+        raise ValueError("無效的內容分類篩選")
+    if value == "":
+        return "1 = 1"
+    if value == "none":
+        return "1 = 0"
+    parts = value.split(",")
+    if len(parts) > 3 or len(set(parts)) != len(parts) or any(part not in CONTENT_FILTERS for part in parts):
         raise ValueError("無效的內容分類篩選")
     prefix = f"{alias}." if alias else ""
     bl = f"COALESCE({prefix}bl_category, '') <> ''"
     r18 = f"COALESCE({prefix}content_rating, 'unknown') = 'restricted_18'"
-    return {
-        "": "1 = 1",
+    clauses = {
         "general": f"(NOT ({bl}) AND NOT ({r18}))",
         "bl": f"({bl})",
         "r18": f"({r18})",
         "bl_r18": f"({bl} AND {r18})",
-    }[value]
+    }
+    return "(" + " OR ".join(clauses[part] for part in parts) + ")"
 
 
 def add_publisher_filter(filters: dict[str, str], where: list[str], values: list[Any], *, private_book_column: str | None = None) -> None:

@@ -155,9 +155,18 @@
               <select id="typeFilter" aria-label="類型">
                 <option value="">漫畫與小說</option><option value="manga">漫畫</option><option value="novel">輕小說</option>
               </select>
-              <select id="contentFilter" aria-label="內容分類" title="只篩選目前偏好允許的內容；未確認分類的書仍可能出現">
-                <option value="">所有可見內容</option><option value="general">一般向（非 BL／R18）</option><option value="bl">BL</option><option value="r18">R18</option><option value="bl_r18">BL 且 R18</option>
-              </select>
+              <input id="contentFilter" type="hidden" value="" />
+              <details class="publisher-picker content-picker" id="contentPicker">
+                <summary id="contentSummary" aria-label="內容分類">全部分類</summary>
+                <div class="publisher-menu">
+                  <div class="publisher-actions">
+                    <button class="text-button" type="button" id="contentSelectAll">全選</button>
+                    <button class="text-button" type="button" id="contentSelectNone">清除勾選</button>
+                  </div>
+                  <fieldset id="contentOptions"><legend class="sr-only">選擇內容分類</legend></fieldset>
+                  <button class="primary compact" type="button" id="contentApply">套用篩選</button>
+                </div>
+              </details>
               <select id="statusFilter" aria-label="上市狀態">
                 <option value="">所有狀態</option><option value="scheduled">預定出版</option><option value="scheduled_undated">官方預定・日期未公布</option><option value="available">已到上市日（日期推算）</option><option value="unknown">資料缺日期</option>
               </select>
