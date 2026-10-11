@@ -28,7 +28,7 @@
         </a>
         <nav aria-label="主要導覽">
           <button class="nav-item active" data-view="home" aria-label="首頁"><span>⌂</span>首頁</button>
-          <button class="nav-item" data-view="library"><span>▦</span>Library</button>
+          <button class="nav-item" data-view="library"><span>▦</span>書目查詢</button>
           <button class="nav-item" data-view="series"><span>▤</span>系列書架</button>
           <button class="nav-item" data-view="upcoming"><span>◷</span>近期上市</button>
           <button class="nav-item" data-view="wishlist"><span>♡</span>已訂選</button>
@@ -57,11 +57,11 @@
             <h1 id="pageTitle">我的書架首頁</h1>
           </div>
           <div class="top-actions">
-            <label class="searchbox hidden" id="searchBox">
-              <span>⌕</span>
-              <input id="searchInput" type="search" placeholder="搜尋部分書名、作者或 ISBN" autocomplete="off" />
-              <kbd>Ctrl K</kbd>
-            </label>
+            <div id="headerSearchSlot"><label class="searchbox hidden" id="searchBox">
+              <span aria-hidden="true">⌕</span>
+              <input id="searchInput" type="search" aria-label="搜尋部分書名、作者或 ISBN" aria-keyshortcuts="Control+k Meta+k" placeholder="搜尋部分書名、作者或 ISBN" autocomplete="off" />
+              <kbd title="Windows／Linux 按 Ctrl＋K，Mac 按 ⌘＋K">Ctrl / ⌘ K</kbd>
+            </label></div>
             <button class="primary" id="updateButton"><span>↻</span>更新資料</button>
           </div>
           <div class="account-menu hidden" id="accountMenu">
@@ -81,10 +81,11 @@
               <form class="home-search" id="homeSearchForm" role="search">
                 <label class="sr-only" for="homeSearchInput">搜尋部分書名、作者或 ISBN</label>
                 <span aria-hidden="true">⌕</span>
-                <input id="homeSearchInput" type="search" placeholder="搜尋部分書名、作者或 ISBN" autocomplete="off" />
+                <input id="homeSearchInput" type="search" aria-keyshortcuts="Control+k Meta+k" placeholder="搜尋部分書名、作者或 ISBN" autocomplete="off" />
+                <kbd title="Windows／Linux 按 Ctrl＋K，Mac 按 ⌘＋K">Ctrl / ⌘ K</kbd>
                 <button class="primary" type="submit">找書 ↗</button>
               </form>
-              <small>不必輸入完整書名 · Ctrl K 快速搜尋</small>
+              <small>不必輸入完整書名 · Ctrl＋K／⌘＋K 聚焦搜尋</small>
             </div>
             <div class="home-shelf" aria-hidden="true"><span class="shelf-caption">ONE MORE CHAPTER</span><div class="shelf-books"><i>AniShelf</i><i>漫畫</i><i>STORIES</i><i>輕小說</i><i>YOUR SHELF</i></div><div class="shelf-base"></div><span class="shelf-footnote">把喜歡的故事，留在自己的書架。</span></div>
           </div>
@@ -117,7 +118,12 @@
           <article><span class="stat-icon violet">♡</span><div><small>已訂選／追蹤</small><strong id="statWishlist">—</strong></div></article>
         </section>
 
-        <div class="catalog-filter-bar hidden" id="catalogFilterBar">
+        <div class="catalog-search-tools hidden" id="catalogSearchTools" role="region" aria-label="書目搜尋與出版社篩選">
+          <div class="catalog-search-row hidden" id="catalogSearchRow">
+            <div id="catalogSearchSlot"></div>
+            <button class="secondary compact" id="showCatalogFilters" type="button" aria-controls="catalogToolbar">篩選條件 ↓</button>
+          </div>
+          <div class="catalog-filter-bar hidden" id="catalogFilterBar">
           <details class="publisher-picker" id="publisherFilter">
             <summary id="publisherSummary">全部出版社</summary>
             <div class="publisher-menu">
@@ -132,6 +138,7 @@
           </details>
           <small id="publisherSelectionHint">顯示全部出版社；可任選多家</small>
           <button class="text-button" id="publisherReset" type="button">重設出版社</button>
+          </div>
         </div>
         <section class="content-card view-section hidden" id="libraryView">
           <div class="collection-summary hidden" id="collectionSummary">
@@ -143,7 +150,7 @@
             <button class="primary" id="addCollectionBook" type="button">＋ 新增藏書</button>
             <a class="secondary button-link" href="/api/export.csv?collection=1">匯出藏書 CSV</a>
           </div>
-          <div class="toolbar">
+          <div class="toolbar" id="catalogToolbar">
             <div class="filters">
               <select id="typeFilter" aria-label="類型">
                 <option value="">漫畫與小說</option><option value="manga">漫畫</option><option value="novel">輕小說</option>
@@ -385,6 +392,7 @@
     <dialog id="guestImportDialog" class="prompt-dialog" aria-labelledby="guestImportTitle"><div class="prompt-content" id="guestImportContent"></div></dialog>
     <script src="/home.js" defer></script>
     <script src="/content-filters.js" defer></script>
+    <script src="/search-navigation.js" defer></script>
     <script src="/guest.js" defer></script>
     <script src="/guest-ui.js" defer></script>
     <script src="/app.js" defer></script>

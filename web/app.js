@@ -1157,7 +1157,7 @@ async function switchView(view, replace = false) {
   $(`#${libraryMode ? "library" : view}View`).classList.remove("hidden");
   const titles = {
     home: ["YOUR READING SPACE", "我的書架首頁"],
-    library: ["ALL CATALOG", "Library"], wishlist: ["WISHLIST", "已訂選清單"],
+    library: ["ALL CATALOG", "書目查詢"], wishlist: ["WISHLIST", "已訂選清單"],
     collection: ["OWNED BOOKS", "我的藏書"],
     series: ["SERIES SHELF", "系列書架"], upcoming: ["RELEASE CALENDAR", "近期上市"],
     recommendations: ["FOR YOU", "為你推薦"],
@@ -1168,6 +1168,7 @@ async function switchView(view, replace = false) {
   $("#pageEyebrow").textContent = titles[view][0];
   $("#pageTitle").textContent = titles[view][1];
   $("#searchBox").classList.toggle("hidden", !["library", "wishlist", "collection", "series"].includes(view));
+  window.AniShelfSearchNavigation.mount(view);
   $("#wishlistStateFilter").classList.toggle("hidden", view !== "wishlist");
   $("#ownedFormatFilter").classList.toggle("hidden", view !== "collection");
   $("#contentFilter").classList.toggle("hidden", view !== "library");
@@ -1384,16 +1385,7 @@ $("#followPromptLater").addEventListener("click", () => {
   $("#followPromptDialog").close();
   state.pendingSeriesFollow = null;
 });
-document.addEventListener("keydown", event => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    if (state.view === "home") $("#homeSearchInput").focus();
-    else {
-      if (!["library", "wishlist", "collection", "series"].includes(state.view)) switchView("library");
-      $("#searchInput").focus();
-    }
-  }
-});
+window.AniShelfSearchNavigation.init({getView: () => state.view, switchView, ready: () => state.ready});
 
 let libraryResizeTimer;
 window.addEventListener("resize", () => {
