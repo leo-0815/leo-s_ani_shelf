@@ -68,6 +68,19 @@ CREATE TABLE IF NOT EXISTS books (
     CONSTRAINT fk_books_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS book_source_aliases (
+    publisher_id BIGINT UNSIGNED NOT NULL,
+    alias_key VARCHAR(190) NOT NULL,
+    book_id BIGINT UNSIGNED NOT NULL,
+    source_kind VARCHAR(20) NOT NULL,
+    match_method VARCHAR(30) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (publisher_id, alias_key),
+    KEY idx_book_aliases_book (book_id),
+    CONSTRAINT fk_book_alias_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(id),
+    CONSTRAINT fk_book_alias_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS book_release_checks (
     book_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
     attempted_at DATETIME NOT NULL,

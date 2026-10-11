@@ -55,7 +55,8 @@ class ChingWinSource:
     ) -> Iterator[tuple[list[BookRecord], dict[str, Any] | None]]:
         from ..repository import get_backfill_progress
 
-        seen_keys = set(known_keys or set())
+        known_keys = set(known_keys or set())
+        seen_keys: set[str] = set()
         if not backfill:
             schedule_records = self._collect_schedule(seen_keys, cursor_value)
             seen_keys.update(record.source_key for record in schedule_records)
@@ -84,10 +85,17 @@ class ChingWinSource:
                     cutoff,
                 )
                 records = [
-                    record for record in page_records if record.source_key not in seen_keys
+                    record for record in page_records
+                    if record.source_key not in seen_keys
+                    and (not backfill or record.source_key not in known_keys)
                 ]
                 seen_keys.update(record.source_key for record in records)
-                records = [self._with_product_rating(record) for record in records]
+                # Daily listing JSON already contains fresh public metadata. Keep
+                # refreshing known SKUs in the existing three-page window, but
+                # do not add per-product detail fetches for them.
+                new_count = sum(record.source_key not in known_keys for record in records)
+                records = [self._with_product_rating(record) if record.source_key not in known_keys
+                           else record for record in records]
                 completed = page_number >= total_pages
                 checkpoint = (
                     {
@@ -101,7 +109,7 @@ class ChingWinSource:
                 )
                 print(
                     f"青文 {segment} 第 {page_number}/{total_pages} 頁："
-                    f"一年窗口 {len(page_records)} 筆、未收錄 {len(records)} 筆",
+                    f"一年窗口 {len(page_records)} 筆、未收錄 {new_count} 筆、更新 {len(records)} 筆",
                     flush=True,
                 )
                 yield records, checkpoint
@@ -291,6 +299,7 @@ class ChingWinSource:
                     list_price=int(price.replace(",", "")),
                     release_date=release,
                     release_precision="month",
+                    release_date_source="schedule",
                     edition_type=edition,
                     volume_label=extract_volume(book_title),
                     series_title=infer_series_title(book_title),
