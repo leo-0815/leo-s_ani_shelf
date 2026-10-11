@@ -8,7 +8,7 @@ import re
 from datetime import date
 from dataclasses import asdict, replace
 from typing import Any, Iterator
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
 from .common import fetch_html, one_year_cutoff, parse_page, polite_pause, unique
@@ -244,7 +244,7 @@ class ChingWinSource:
                     media_type=media_type,
                     author=author,
                     isbn=isbn,
-                    cover_url=str(value.get("image") or product.get("image") or "") or None,
+                    cover_url=self._cover_url(value.get("image") or product.get("image"), page_url),
                     list_price=int(price_text) if price_text.isdigit() else None,
                     release_date=release,
                     release_precision="day" if release else "unknown",
@@ -263,6 +263,18 @@ class ChingWinSource:
         total = int(total_match.group(1).replace(",", "")) if total_match else len(results)
         total_pages = max(1, math.ceil(total / self.page_size))
         return results, total_pages
+
+    @staticmethod
+    def _cover_url(value: Any, page_url: str) -> str | None:
+        values = value if isinstance(value, list) else [value]
+        for image in values:
+            if isinstance(image, dict):
+                image = image.get("url") or image.get("contentUrl")
+            if isinstance(image, str) and image.strip():
+                url = urljoin(page_url, image.strip())
+                if urlsplit(url).scheme in {"http", "https"} and urlsplit(url).hostname:
+                    return url
+        return None
 
     def _parse_article(self, url: str, markup: str) -> list[BookRecord]:
         page = parse_page(markup)

@@ -45,6 +45,7 @@ class DetailRecommendationSqlTests(unittest.TestCase):
                 rating_confidence INTEGER, rating_checked_at TEXT,
                 rating_parser_version TEXT, rating_locked INTEGER, bl_category TEXT);
             CREATE TABLE wishlist_items(book_id INTEGER, user_id INTEGER);
+            CREATE TABLE catalog_book_merges(old_book_id INTEGER PRIMARY KEY,canonical_book_id INTEGER);
             CREATE TABLE recommendation_dismissals(book_id INTEGER, user_id INTEGER);
         """)
         for book_id, series, rating, publisher, confidence in [

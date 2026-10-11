@@ -17,6 +17,7 @@ from .preferences import visibility_scope, visible_book_sql, content_mode
 COOKIE = "anishelf_guest"
 _KEY = secrets.token_bytes(32)  # Rotates on service restart; browser shelves do not.
 BOOK_FIELDS = set("id title normalized_title series_title series_key volume_label edition_type media_type content_rating bl_category author isbn cover_url list_price release_date release_precision release_status release_date_source release_checked_at release_checked_at_utc release_display_status first_seen_at updated_at source_url publisher_code publisher_name recommendation_types recommendation_reason".split())
+BOOK_FIELDS.update({"previous_ids", "canonical_book_id"})
 
 
 def signature(value: str) -> str:
@@ -85,6 +86,8 @@ def public_get(path: str, query: dict[str, str]):
         # a shared user 0. A response allowlist also strips every private field.
         if path == "books":
             data = repo.list_books(filters, None, int(query.get("limit", 100)), int(query.get("offset", 0)))
+            from .catalog_reconciliation import previous_ids
+            data["items"] = previous_ids(data["items"])
             data["items"] = [public_book(row) for row in data["items"]]
             return data
         if path == "book-batch":
@@ -96,16 +99,22 @@ def public_get(path: str, query: dict[str, str]):
                 raise RequestError("無效的書目識別碼")
             with transaction() as connection, connection.cursor() as cursor:
                 cursor.execute("SELECT b.*,p.code AS publisher_code,p.name AS publisher_name FROM books b "
-                               "JOIN publishers p ON p.id=b.publisher_id WHERE b.id IN (" +
-                               ",".join(["%s"] * len(ids)) + ") AND " + visible_book_sql(), ids)
-                return {"items": [public_book(repo.serialize_row(row)) for row in cursor.fetchall()]}
+                               "JOIN publishers p ON p.id=b.publisher_id WHERE (b.id IN (" +
+                               ",".join(["%s"] * len(ids)) + ") OR b.id IN (SELECT canonical_book_id FROM catalog_book_merges WHERE old_book_id IN (" +
+                               ",".join(["%s"] * len(ids)) + "))) AND " + visible_book_sql(), [*ids, *ids])
+                books = {r["id"]: public_book(repo.serialize_row(r)) for r in cursor.fetchall()}
+                cursor.execute("SELECT old_book_id,canonical_book_id FROM catalog_book_merges WHERE old_book_id IN (" +
+                               ",".join(["%s"] * len(ids)) + ")", ids)
+                aliases = {r["old_book_id"]: r["canonical_book_id"] for r in cursor.fetchall()}
+                return {"items": [{**books[aliases.get(i, i)], "id": i,
+                                   "canonical_book_id": aliases.get(i, i)} for i in ids if aliases.get(i, i) in books]}
         if match := re.fullmatch(r"books/([0-9]+)/recommendations", path):
             return {"items": [public_book(row) for row in repo.list_book_recommendations(None, int(match[1]), min(int(query.get("limit", 8)), 20))]}
         if match := re.fullmatch(r"books/([0-9]+)", path):
             book = repo.get_book(int(match[1]), None)
             if not book:
                 raise RequestError("找不到書籍或不符合目前瀏覽偏好", 404)
-            return public_book(book)
+            return public_book({**book, "id": int(match[1]), "canonical_book_id": book["id"]})
         if path == "series":
             data = repo.list_series(filters, None, int(query.get("limit", 60)), int(query.get("offset", 0)))
             fields = set("publisher_code publisher_name series_title series_key media_type book_count volume_count first_date last_date scheduled_count cover_url".split())

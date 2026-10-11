@@ -97,6 +97,14 @@ const write=(p,payload)=>guest.api(p,{method:'POST',body:JSON.stringify(payload)
   await assert.rejects(guest.api('/api/books/1',{},stillExpired),/expired/);assert.equal(renewals,1,'renewal must not loop');
   const separate=guest.empty();separate.follows=[{publisher:'test',series_key:'series',media_type:'novel',scope:'all'}];
   assert.equal(guest.decorate({...catalog[0],media_type:'manga'},separate).series_following,false);
+  const legacy=guest.empty();
+  legacy.collection[90]={id:7,notes:'legacy owned'};
+  legacy.books[90]={...catalog[0],id:90,canonical_book_id:1};
+  let promoted=guest.decorate({...catalog[0],previous_ids:[90]},legacy);
+  assert.equal(promoted.id,90);assert.equal(promoted.canonical_book_id,1);
+  assert.equal(promoted.collection.notes,'legacy owned');
+  promoted=guest.decorate(catalog[0],legacy);
+  assert.equal(promoted.id,90,'refreshed legacy snapshot still decorates canonical catalog rows');
   // Confirm a refreshed module (like a page reload) reads the same IDB state.
   await write('/api/preferences',{content_mode:'all'});
   let releaseOld, batchReads=0, started;

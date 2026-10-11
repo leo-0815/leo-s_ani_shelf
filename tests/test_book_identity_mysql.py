@@ -36,7 +36,7 @@ class IdentityMySQLTests(unittest.TestCase):
                 columns = ", ".join(f"{f} {types.get(f, 'TEXT')}" for f in BOOK_FIELDS)
                 cursor.execute("CREATE TEMPORARY TABLE books (id BIGINT AUTO_INCREMENT PRIMARY KEY, "
                                f"publisher_id BIGINT, source_key VARCHAR(190), {columns}, "
-                               "rating_locked BOOLEAN DEFAULT FALSE, last_seen_at DATETIME, "
+                               "rating_locked BOOLEAN DEFAULT FALSE, last_seen_at DATETIME, first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
                                "UNIQUE KEY(publisher_id,source_key)) ENGINE=InnoDB")
                 cursor.execute("CREATE TEMPORARY TABLE series_aliases (publisher_id BIGINT, alias_key VARCHAR(190), "
                                "canonical_key VARCHAR(190), approved BOOLEAN)")
@@ -81,6 +81,32 @@ class IdentityMySQLTests(unittest.TestCase):
                     self.assertEqual(cursor.fetchone()["n"], 2)
                     cursor.execute("SELECT notes FROM collection_items WHERE book_id = %s", (book_id,))
                     self.assertEqual(cursor.fetchone()["notes"], "keep")
+                # Existing duplicate cleanup uses real JSON/types/transaction SQL,
+                # still only these connection-local temporary tables.
+                with connection.cursor() as cursor:
+                    ddl = next(s for s in schema.split(';') if 'CREATE TABLE IF NOT EXISTS catalog_book_merges (' in s)
+                    ddl = ddl.replace('CREATE TABLE IF NOT EXISTS', 'CREATE TEMPORARY TABLE')
+                    ddl = '\n'.join(line for line in ddl.splitlines() if 'CONSTRAINT ' not in line)
+                    ddl = ddl.replace('KEY idx_catalog_merge_canonical (canonical_book_id),', 'KEY idx_catalog_merge_canonical (canonical_book_id)')
+                    cursor.execute(ddl)
+                duplicate = replace(schedule, source_key="historical-duplicate", author="other")
+                upsert_book(duplicate)
+                with connection.cursor() as cursor:
+                    cursor.execute("UPDATE books SET author=%s WHERE source_key=%s", (schedule.author,duplicate.source_key))
+                connection.commit()
+                from app.catalog_reconciliation import preview, apply_pairs, alias_page
+                with patch("app.catalog_reconciliation.transaction",temporary_transaction), patch(
+                    "app.catalog_reconciliation._reference_tables",return_value=["collection_items","catalog_changes","release_history"]):
+                    plan = preview()
+                    self.assertEqual(plan["total_pairs"],1)
+                    self.assertEqual(apply_pairs(plan["pairs"])["merged"],1)
+                    self.assertEqual(preview()["total_pairs"],0)
+                    self.assertNotIn("notes",str(alias_page()))
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT COUNT(*) AS n FROM books")
+                    self.assertEqual(cursor.fetchone()["n"],1)
+                    cursor.execute("SELECT notes FROM collection_items WHERE book_id=%s",(book_id,))
+                    self.assertEqual(cursor.fetchone()["notes"],"keep")
         finally:
             connection.rollback()
             connection.close()  # All temporary tables disappear, even on failure.

@@ -81,6 +81,19 @@ CREATE TABLE IF NOT EXISTS book_source_aliases (
     CONSTRAINT fk_book_alias_book FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS catalog_book_merges (
+    old_book_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+    canonical_book_id BIGINT UNSIGNED NOT NULL,
+    old_book_json JSON NOT NULL,
+    canonical_before_json JSON NOT NULL,
+    references_json JSON NOT NULL,
+    aliases_json JSON NOT NULL,
+    canonical_after_hash CHAR(64) NULL,
+    merged_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_catalog_merge_canonical (canonical_book_id),
+    CONSTRAINT fk_catalog_merge_canonical FOREIGN KEY (canonical_book_id) REFERENCES books(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS book_release_checks (
     book_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
     attempted_at DATETIME NOT NULL,

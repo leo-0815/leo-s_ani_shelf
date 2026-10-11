@@ -525,6 +525,8 @@ def search_terms(query: str) -> list[str]:
 def get_book(book_id: int, user_id: int) -> dict[str, Any] | None:
     with transaction() as connection:
         with connection.cursor() as cursor:
+            from .catalog_reconciliation import resolve_book_id
+            book_id = resolve_book_id(cursor, book_id)
             cursor.execute(
                 "SELECT b.*, p.code AS publisher_code, p.name AS publisher_name, "
                 "w.state AS wishlist_state, w.notes AS wishlist_notes, w.follow_series, "
@@ -577,6 +579,8 @@ def set_wishlist(
     requested_purchased_date = date.fromisoformat(purchased_at) if purchased_at else None
     with transaction() as connection:
         with connection.cursor() as cursor:
+            from .catalog_reconciliation import resolve_book_id
+            book_id = resolve_book_id(cursor, book_id)
             cursor.execute(
                 "SELECT b.id, w.purchased_at AS existing_purchased_at FROM books b "
                 "LEFT JOIN wishlist_items w ON w.book_id = b.id AND w.user_id = %s "
@@ -638,6 +642,8 @@ def resolve_purchased_date(
 def delete_wishlist(user_id: int, book_id: int) -> None:
     with transaction() as connection:
         with connection.cursor() as cursor:
+            from .catalog_reconciliation import resolve_book_id
+            book_id = resolve_book_id(cursor, book_id)
             cursor.execute(
                 "SELECT follow_series FROM wishlist_items WHERE user_id = %s AND book_id = %s",
                 (user_id, book_id),
@@ -839,6 +845,8 @@ def list_book_recommendations(
     query_limit = min(limit * 4, 80)
     with transaction() as connection:
         with connection.cursor() as cursor:
+            from .catalog_reconciliation import resolve_book_id
+            book_id = resolve_book_id(cursor, book_id)
             cursor.execute(
                 "SELECT id, publisher_id, title, series_title, series_key, media_type, "
                 "volume_label, author "
@@ -909,6 +917,8 @@ def list_book_recommendations(
 def dismiss_recommendation(user_id: int, book_id: int) -> None:
     with transaction() as connection:
         with connection.cursor() as cursor:
+            from .catalog_reconciliation import resolve_book_id
+            book_id = resolve_book_id(cursor, book_id)
             cursor.execute("SELECT id FROM books WHERE id = %s", (book_id,))
             if not cursor.fetchone():
                 raise KeyError("找不到指定書目")

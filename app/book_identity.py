@@ -81,10 +81,7 @@ def compatible(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return not (a and b and a != b)
 
 
-def find_chingwin_match(cursor: Any, publisher_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
-    kind = chingwin_source_kind(data)
-    if kind == "other":
-        return None
+def identity_candidates(cursor: Any, publisher_id: int, data: dict[str, Any]) -> list[dict[str, Any]]:
     raw = normalize_text(data["title"])
     bare = re.sub(r"^(?:輕小說\s*|(?:小說|漫畫)\s+)", "", raw)
     keys = sorted({series_key(title, "chingwin") for title in
@@ -102,10 +99,19 @@ def find_chingwin_match(cursor: Any, publisher_id: int, data: dict[str, Any]) ->
         "SELECT * FROM books WHERE publisher_id = %s AND media_type = %s AND ("
         + " OR ".join(conditions) + ") LIMIT 201 FOR UPDATE", args,
     )
-    candidates = cursor.fetchall()
+    return cursor.fetchall()
+
+
+def find_chingwin_match(cursor: Any, publisher_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
+    kind = chingwin_source_kind(data)
+    if kind == "other":
+        return None
+    candidates = identity_candidates(cursor, publisher_id, data)
     if len(candidates) > 200:
         return None  # A broad/ambiguous series is not a safe automatic match.
     matches = []
+    isbn = _isbn(data)
+    conflicting_product = False
     for candidate in candidates:
         old_kind = chingwin_source_kind(candidate)
         if old_kind == "other" or not compatible(candidate, data):
@@ -114,6 +120,10 @@ def find_chingwin_match(cursor: Any, publisher_id: int, data: dict[str, Any]) ->
         if kind == old_kind == "product":
             if chingwin_product_id(candidate) == chingwin_product_id(data):
                 matches.append(candidate)
+            elif (isbn and isbn == _isbn(candidate)) or (
+                    _title(candidate["title"]) == _title(data["title"]) and
+                    author_tokens(candidate.get("author")) & author_tokens(data.get("author"))):
+                conflicting_product = True
             continue
         if isbn and isbn == _isbn(candidate):
             matches.append(candidate)
@@ -121,6 +131,8 @@ def find_chingwin_match(cursor: Any, publisher_id: int, data: dict[str, Any]) ->
         if (_title(candidate["title"]) == _title(data["title"])
                 and author_tokens(candidate.get("author")) & author_tokens(data.get("author"))):
             matches.append(candidate)
+    if conflicting_product and any(chingwin_source_kind(row) != "product" for row in matches):
+        return None
     return matches[0] if len(matches) == 1 else None
 
 
