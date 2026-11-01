@@ -17,6 +17,9 @@ class TohanSource:
     max_items = 30
     latest_cursor: str | None = None
 
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+
     def collect(
         self,
         known_keys: set[str] | None = None,
@@ -55,8 +58,12 @@ class TohanSource:
             polite_pause()
             try:
                 records.append(self._parse_detail(url, fetch_html(url)))
-            except (ValueError, RuntimeError):
-                continue
+                from .common import product_success
+                product_success(self, url)
+            except Exception as exc:
+                self.errors.append(f"{url}：{exc}")
+                from .common import product_failure
+                product_failure(self, url, exc)
         if not records and not known_keys:
             raise RuntimeError("台灣東販商品清單沒有解析到有效書目")
         return records

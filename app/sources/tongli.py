@@ -87,10 +87,16 @@ class TongLiSource:
             polite_pause(0.35)
             try:
                 records.append(self._parse_detail(url, fetch_html(url)))
-            except ValueError:
+                from .common import product_success
+                product_success(self, url)
+            except ValueError as exc:
                 self.skipped_count += 1
-            except RuntimeError as exc:
+                from .common import product_failure
+                product_failure(self, url, exc)
+            except Exception as exc:
                 self.errors.append(f"{url}：{exc}")
+                from .common import product_failure
+                product_failure(self, url, exc)
         if not records and not known_keys:
             raise RuntimeError("東立新書明細沒有解析到有效書目")
         yield records, None

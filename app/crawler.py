@@ -140,6 +140,9 @@ def _run_job(
         )
         for code in codes:
             source = SOURCES[code]()
+            if mode == "incremental" and code != "egmanga":
+                from .recent_recheck import attach_failure_recorder
+                attach_failure_recorder(source)
             try:
                 if mode == "backfill":
                     print(f"大型回填：開始 {source.name}…", flush=True)
@@ -258,6 +261,9 @@ def _write_records(
     for record in records:
         try:
             outcome = upsert_book(record)
+            if getattr(source, "record_product_failure", None):
+                from .recent_recheck import acknowledge_saved
+                acknowledge_saved(source, record)
             if outcome == "inserted":
                 totals["inserted"] += 1
             elif outcome == "updated":
@@ -270,6 +276,8 @@ def _write_records(
                 f"({getattr(record, 'source_key', '?')} / "
                 f"{getattr(record, 'title', '?')})：{exc}"
             )
+            if getattr(source, "record_product_failure", None):
+                source.record_product_failure(record.source_url, str(exc), record)
     return errors
 
 

@@ -129,10 +129,15 @@ class ChingWinSource:
             except ValueError:
                 pass  # No explicit SKU publication field: retain catalog fallback.
             from .product_rating import rating_fields
-            return replace(record, **rating_fields(self.code, record.source_url, markup,
-                                                  record.source_key, record.isbn))
+            result = replace(record, **rating_fields(self.code, record.source_url, markup,
+                                                    record.source_key, record.isbn))
+            from .common import product_success
+            product_success(self, record.source_url)
+            return result
         except Exception as exc:
             self.errors.append(f'青文商品分級 {record.source_key}: {exc}')
+            from .common import product_failure
+            product_failure(self, record.source_url, exc, seed=record)
             return record
 
     def commit_batch(self, checkpoint: dict[str, Any] | None) -> None:

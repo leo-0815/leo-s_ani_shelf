@@ -189,7 +189,10 @@ class SppSource:
     ) -> list[tuple[BookRecord | None, date | None]]:
         def fetch_one(url: str) -> tuple[BookRecord | None, date | None]:
             self._limiter.wait()
-            return self._parse_detail(url, fetch_html(url, timeout=30, attempts=3))
+            result = self._parse_detail(url, fetch_html(url, timeout=30, attempts=3))
+            from .common import product_success
+            product_success(self, url)
+            return result
 
         results: list[tuple[BookRecord | None, date | None]] = []
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
@@ -197,12 +200,16 @@ class SppSource:
             for url, future in zip(urls, futures):
                 try:
                     results.append(future.result())
-                except ValueError:
+                except ValueError as exc:
                     self.skipped_count += 1
                     results.append((None, None))
+                    from .common import product_failure
+                    product_failure(self, url, exc)
                 except Exception as exc:
                     self.errors.append(f"{url}：{exc}")
                     results.append((None, None))
+                    from .common import product_failure
+                    product_failure(self, url, exc)
         return results
 
     def _parse_detail(
