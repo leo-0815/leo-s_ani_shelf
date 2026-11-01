@@ -11,7 +11,6 @@
     <section class="login-gate" id="loginGate">
       <div class="login-card">
         <span class="login-mark">A</span>
-        <p class="eyebrow">ANISHELF CLOUD</p>
         <h1>登入你的收藏書架</h1>
         <p>使用 Google 帳號登入；AniShelf 不會取得或保存你的 Google 密碼。</p>
         <a class="google-login" id="googleLogin" href="/auth/google">使用 Google 登入</a>
@@ -53,7 +52,6 @@
 
         <header class="topbar">
           <div>
-            <p class="eyebrow" id="pageEyebrow">YOUR READING SPACE</p>
             <h1 id="pageTitle">我的書架首頁</h1>
           </div>
           <div class="top-actions">
@@ -76,9 +74,7 @@
         <section class="home-view view-section" id="homeView" aria-label="首頁導航">
           <div class="home-hero">
             <div class="home-intro">
-              <p class="eyebrow">A PLACE FOR YOUR NEXT CHAPTER</p>
               <h2 id="homeGreeting">歡迎回到你的書架。</h2>
-              <p>找下一本想讀的書，整理已收藏的故事。<br>你的訂選、系列與上市消息，都從這裡開始。</p>
               <form class="home-search" id="homeSearchForm" role="search">
                 <label class="sr-only" for="homeSearchInput">搜尋部分書名、作者或 ISBN</label>
                 <span aria-hidden="true">⌕</span>
@@ -86,26 +82,25 @@
                 <kbd title="Windows／Linux 按 Ctrl＋K，Mac 按 ⌘＋K">Ctrl / ⌘ K</kbd>
                 <button class="primary" type="submit">找書 ↗</button>
               </form>
-              <small>不必輸入完整書名 · Ctrl＋K／⌘＋K 聚焦搜尋</small>
             </div>
-            <div class="home-shelf" aria-hidden="true"><span class="shelf-caption">ONE MORE CHAPTER</span><div class="shelf-books"><i>AniShelf</i><i>漫畫</i><i>STORIES</i><i>輕小說</i><i>YOUR SHELF</i></div><div class="shelf-base"></div><span class="shelf-footnote">把喜歡的故事，留在自己的書架。</span></div>
+            <div class="home-shelf" aria-hidden="true"><div class="shelf-books"><i>AniShelf</i><i>漫畫</i><i>文庫</i><i>輕小說</i><i>藏書</i></div><div class="shelf-base"></div></div>
           </div>
           <div class="home-counts" aria-label="個人書架摘要">
             <a href="#wishlist"><span class="stat-icon coral" aria-hidden="true">♡</span><span><small>已訂選</small><strong id="homeWishlist">—</strong></span><b aria-hidden="true">↗</b></a>
             <a href="#collection"><span class="stat-icon mint" aria-hidden="true">✓</span><span><small>我的藏書</small><strong id="homeCollection">—</strong></span><b aria-hidden="true">↗</b></a>
             <a href="#series"><span class="stat-icon violet" aria-hidden="true">▤</span><span><small>追蹤系列</small><strong id="homeFollowed">—</strong></span><b aria-hidden="true">↗</b></a>
           </div>
-          <div class="home-section-title"><div><p class="eyebrow">EXPLORE YOUR SHELF</p><h2>今天想做什麼？</h2></div><a href="#preferences">調整瀏覽偏好 ↗</a></div>
+          <div class="home-section-title"><h2>快速前往</h2><a href="#preferences">瀏覽偏好 ↗</a></div>
           <div class="home-shortcuts">
-            <a href="#library"><span class="stat-icon coral" aria-hidden="true">⌕</span><div><h3>查詢書籍</h3><p>漫畫、輕小說與不同版本，一起找。</p></div><b aria-hidden="true">↗</b></a>
-            <a href="#series"><span class="stat-icon violet" aria-hidden="true">▤</span><div><h3>系列書架</h3><p>整理系列集數，追蹤喜歡的故事。</p></div><b aria-hidden="true">↗</b></a>
-            <a href="#upcoming"><span class="stat-icon amber" aria-hidden="true">◷</span><div><h3>近期上市</h3><p>查看出版日期，安排下一次補書。</p></div><b aria-hidden="true">↗</b></a>
-            <a href="#wishlist"><span class="stat-icon coral" aria-hidden="true">♡</span><div><h3>已訂選</h3><p>想買或已預購的書，不再忘記。</p></div><b aria-hidden="true">↗</b></a>
-            <a href="#collection"><span class="stat-icon mint" aria-hidden="true">✓</span><div><h3>我的藏書</h3><p>收藏、購入紀錄與手動新增書籍。</p></div><b aria-hidden="true">↗</b></a>
-            <a href="#recommendations"><span class="stat-icon violet" aria-hidden="true">✦</span><div><h3>為你推薦</h3><p>從你的收藏出發，發現下一本好書。</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#library"><span class="stat-icon coral" aria-hidden="true">⌕</span><div><h3>書目查詢</h3></div><b aria-hidden="true">↗</b></a>
+            <a href="#series"><span class="stat-icon violet" aria-hidden="true">▤</span><div><h3>系列書架</h3></div><b aria-hidden="true">↗</b></a>
+            <a href="#upcoming"><span class="stat-icon amber" aria-hidden="true">◷</span><div><h3>近期上市</h3></div><b aria-hidden="true">↗</b></a>
+            <a href="#wishlist"><span class="stat-icon coral" aria-hidden="true">♡</span><div><h3>已訂選</h3><p>想買・已預購</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#collection"><span class="stat-icon mint" aria-hidden="true">✓</span><div><h3>我的藏書</h3><p>已持有・購入紀錄</p></div><b aria-hidden="true">↗</b></a>
+            <a href="#recommendations"><span class="stat-icon violet" aria-hidden="true">✦</span><div><h3>為你推薦</h3></div><b aria-hidden="true">↗</b></a>
           </div>
           <section class="home-releases" aria-labelledby="homeReleaseTitle">
-            <div class="home-section-title"><div><p class="eyebrow">COMING TO YOUR SHELF</p><h2 id="homeReleaseTitle">你關注的書，即將上市</h2><small id="homeDate">未來 7 天 · 台北時間</small></div><a href="#upcoming">查看上市日程 ↗</a></div>
+            <div class="home-section-title"><div><h2 id="homeReleaseTitle">關注書目・近期上市</h2><small id="homeDate">未來 7 天 · 台北時間</small></div><a href="#upcoming">上市日程 ↗</a></div>
             <div id="homeUpcoming" class="home-upcoming" aria-live="polite"></div>
             <p class="home-release-note">依出版社目前公布的預定日期整理，不代表已上架或出貨；請以商品頁為準。僅顯示符合目前瀏覽偏好的書目。</p>
           </section>
@@ -128,7 +123,6 @@
           <details class="publisher-picker" id="publisherFilter">
             <summary id="publisherSummary">全部出版社</summary>
             <div class="publisher-menu">
-              <p>可同時勾選多家出版社</p>
               <div class="publisher-actions">
                 <button class="text-button" type="button" id="publisherSelectAll">全選</button>
                 <button class="text-button" type="button" id="publisherSelectNone">清除勾選</button>
@@ -137,7 +131,7 @@
               <button class="primary compact" type="button" id="publisherApply">套用篩選</button>
             </div>
           </details>
-          <small id="publisherSelectionHint">顯示全部出版社；可任選多家</small>
+          <small id="publisherSelectionHint"></small>
           <button class="text-button" id="publisherReset" type="button">重設出版社</button>
           </div>
         </div>
@@ -200,7 +194,7 @@
 
         <section class="content-card view-section hidden" id="seriesView">
           <div class="section-heading">
-            <div><p class="eyebrow">SERIES SHELF</p><h2>系列與版本分組</h2></div>
+            <div><h2>系列與版本</h2></div>
             <p id="seriesCount">讀取中…</p>
           </div>
           <div class="series-grid" id="seriesGrid"></div>
@@ -213,7 +207,7 @@
 
         <section class="content-card view-section hidden" id="upcomingView">
           <div class="section-heading action-heading">
-            <div><p class="eyebrow">RELEASE CALENDAR</p><h2>近期上市</h2></div>
+            <div><h2>近期上市</h2></div>
             <div class="heading-actions">
               <select id="upcomingDays" aria-label="日期範圍"><option value="7">未來 7 天</option><option value="31" selected>未來 31 天</option><option value="90">未來 90 天</option></select>
               <a class="secondary button-link" href="/api/calendar.ics?days=90">匯出日曆</a>
@@ -227,7 +221,6 @@
         <section class="content-card view-section hidden" id="recommendationsView">
           <div class="section-heading action-heading">
             <div>
-              <p class="eyebrow">FOR YOU</p>
               <h2>依照你的已購入收藏推薦</h2>
             </div>
             <button class="secondary" id="restoreRecommendations">重新顯示已忽略項目</button>
@@ -247,7 +240,7 @@
         <section class="content-card view-section hidden" id="notificationsView">
           <div class="guest-note hidden" id="guestNotificationNote"><h3>登入帳號才能收到電子郵件</h3><p>訪客可以收藏與追蹤書籍，但不會啟用雲端寄信。登入後可選擇匯入訪客書架。</p><a href="/auth/google" class="secondary button-link guest-google">使用 Google 登入</a></div>
           <div class="section-heading">
-            <div><p class="eyebrow">NOTIFICATION SETTINGS</p><h2>通知設定</h2></div>
+            <div><h2>通知設定</h2></div>
             <p>每個帳號各自設定；Discord 系統通知仍只有管理員會收到。</p>
           </div>
           <form class="notification-settings" id="notificationPreferencesForm">
@@ -321,7 +314,7 @@
         </section>
 
         <section class="content-card view-section hidden" id="preferencesView">
-          <div class="section-heading"><div><p class="eyebrow">PREFERENCES</p><h2>偏好設定</h2></div></div>
+          <div class="section-heading"><div><h2>偏好設定</h2></div></div>
           <form id="preferencesForm" class="preferences-form">
             <label for="contentMode">內容顯示模式</label>
             <select id="contentMode" name="content_mode">
@@ -336,7 +329,7 @@
             <button class="primary" type="submit">儲存偏好設定</button>
           </form>
           <section class="guest-storage" aria-label="瀏覽器訪客書架">
-            <p class="eyebrow">BROWSER SHELF</p><h3>這個瀏覽器的訪客書架</h3>
+            <h3>這個瀏覽器的訪客書架</h3>
             <p>訪客的訂選、藏書與筆記使用 IndexedDB 保存在此瀏覽器；Cookie 只保存訪客識別。不同裝置不會同步，共用瀏覽器的人也可能看見資料。</p>
             <p>清除網站資料、無痕模式或更換瀏覽器可能造成遺失。備份包含筆記與訂單資訊，請自行妥善保管。還原只新增缺少的記錄，不覆蓋現有資料。</p>
             <div class="form-actions"><button class="secondary" id="guestBackup" type="button">備份訪客書架</button><button class="secondary" id="guestRestore" type="button">還原訪客備份</button><button class="secondary hidden" id="guestImport" type="button">匯入訪客書架到帳號</button><button class="secondary hidden" id="guestSwitch" type="button">切換到訪客書架</button></div>
@@ -345,7 +338,7 @@
         </section>
         <section class="content-card view-section hidden" id="qualityView">
           <div class="section-heading">
-            <div><p class="eyebrow">DATA CHECK</p><h2>資料品質</h2></div>
+            <div><h2>資料品質</h2></div>
             <p>標記缺漏與可疑資料，不會自行刪除。</p>
           </div>
           <div class="release-check-section"><h3>查詢負荷保護</h3><div id="resourceGuardSummary" aria-live="polite">載入保護摘要…</div></div>
@@ -357,7 +350,7 @@
 
         <section class="content-card view-section hidden" id="sourcesView">
           <div class="section-heading action-heading">
-            <div><p class="eyebrow">SOURCE HEALTH</p><h2>資料來源與備份</h2></div>
+            <div><h2>資料來源與備份</h2></div>
             <div class="heading-actions">
               <a class="secondary button-link" href="/api/export.json">備份 JSON</a>
               <a class="secondary button-link" href="/api/export.csv">匯出 CSV</a>
@@ -388,7 +381,6 @@
     <dialog class="prompt-dialog" id="followPromptDialog">
       <div class="prompt-content">
         <span class="prompt-icon">✦</span>
-        <p class="eyebrow">SERIES FOLLOW</p>
         <h2>要追蹤這個系列嗎？</h2>
         <p id="followPromptText"></p>
         <div class="form-actions">
