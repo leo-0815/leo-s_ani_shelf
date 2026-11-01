@@ -350,7 +350,7 @@ function renderPublisherSummary() {
   const selected = state.selectedPublishers;
   const names = selected === null ? [] : selectablePublishers().filter(item => selected.includes(item.code)).map(item => item.name);
   $("#publisherSummary").textContent = selected === null ? "全部出版社" : !selected.length ? "未選擇出版社" : selected.length === 1 ? (names[0] || selected[0]) : `已選 ${selected.length} 家出版社`;
-  $("#publisherSelectionHint").textContent = selected === null ? `${contentModeLabels[state.contentMode]}；可任選多家出版社` : !selected.length ? "請選擇至少一家出版社，或使用全選" : names.join("、") || "所選出版社沒有可見書目";
+  $("#publisherSelectionHint").textContent = selected === null ? "" : !selected.length ? "尚未選擇出版社" : names.join("、") || "所選出版社沒有可見書目";
 }
 
 function addPublisherParams(params) {
@@ -611,7 +611,7 @@ async function openDetail(bookId, mode = state.view === "collection" ? "collecti
       </div>
       ${related.length ? `<section class="detail-related">
         <div class="detail-related-heading">
-          <div><p class="eyebrow">YOU MAY ALSO LIKE</p><h3>你可能會喜歡</h3></div>
+          <div><h3>你可能會喜歡</h3></div>
           <small>同系列優先，其次為同作者作品</small>
         </div>
         <div class="detail-related-track">${related.map(item => {
@@ -815,7 +815,6 @@ async function openSeriesByValues(publisher, title, mediaType) {
     $("#seriesDetailContent").innerHTML = `<div class="series-detail">
       <p class="eyebrow">${escapeHtml(series.publisher_name)} · ${escapeHtml(typeLabels[series.media_type] || "未分類")}</p>
       <h2>${escapeHtml(series.series_title)}</h2>
-      <p class="detail-sub">同一媒體類型的集數、一般版與限定版集中顯示。</p>
       <div class="form-actions">
         <select id="seriesFollowScope" aria-label="系列追蹤範圍">
           <option value="future" ${series.items[0]?.series_follow_scope !== "all" ? "selected" : ""}>只追蹤新書</option>
@@ -1282,7 +1281,6 @@ async function switchView(view, replace = false, overrides = null) {
     notifications: ["NOTIFICATION SETTINGS", "通知設定"],
     quality: ["DATA CHECK", "資料品質"], sources: ["SOURCE HEALTH", "資料來源"],
   };
-  $("#pageEyebrow").textContent = titles[view][0];
   $("#pageTitle").textContent = titles[view][1];
   $("#searchBox").classList.toggle("hidden", !["library", "wishlist", "collection", "series"].includes(view));
   window.AniShelfSearchNavigation.mount(view);
@@ -1410,7 +1408,7 @@ function showCollectionSearch() {
   state.collectionSearchOffset = 0;
   state.collectionSearchQuery = "";
   state.collectionSearchType = "";
-  $("#collectionAddContent").innerHTML = '<p class="eyebrow">ADD TO COLLECTION</p><h2>新增藏書</h2>' +
+  $("#collectionAddContent").innerHTML = '<h2>新增藏書</h2>' +
     '<p class="muted">先搜尋系統書目；找不到時可以手動建立，只會保存在你的藏書。</p>' +
     '<form id="collectionSearchForm" class="collection-search-form"><input id="collectionSearchInput" placeholder="部分書名、作者或 ISBN" aria-label="搜尋藏書">' +
     '<select id="collectionSearchType" aria-label="書籍類型"><option value="">所有類型</option><option value="novel">輕小說</option><option value="manga">漫畫</option></select><button class="primary">搜尋</button></form>' +
@@ -1470,7 +1468,7 @@ function showCustomCollectionForm(book = {}) {
   const input = (name, label, type = "text", required = false) => '<label>' + label +
     '<input name="' + name + '" type="' + type + '" value="' + escapeHtml(book[name] ?? "") +
     '" ' + (required ? 'required maxlength="500"' : "") + (type === "number" ? ' min="0"' : "") + '></label>';
-  $("#collectionAddContent").innerHTML = '<p class="eyebrow">PRIVATE COLLECTION</p><h2>' + (book.id ? "編輯自建藏書" : "手動新增藏書") + '</h2>' +
+  $("#collectionAddContent").innerHTML = '<h2>' + (book.id ? "編輯自建藏書" : "手動新增藏書") + '</h2>' +
     '<p class="muted">只有書名必填。這本書不會進入公開書目或出版社同步資料。</p>' +
     '<form id="customCollectionForm" class="wishlist-form"><div class="form-grid">' +
     input("title", "書名 *", "text", true) + input("author", "作者") + input("publisher_name", "出版社") +

@@ -24,6 +24,7 @@ jobs:
       - run: node --check web/app.js
       - run: node --check web/read-cache.js
       - run: node scripts/test_read_cache.cjs
+      - run: node scripts/test_ui_copy.cjs
       - run: node --check web/home.js
       - run: node --check web/guest.js
       - run: node --check web/guest-ui.js

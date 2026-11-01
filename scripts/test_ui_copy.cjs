@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const read=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+const html=read('web/index.html'),app=read('web/app.js');
+assert.doesNotMatch(html,/<p class="eyebrow"[^>]*>[A-Z ]+<\/p>/);
+assert.doesNotMatch(html,/不必輸入完整書名|可同時勾選多家出版社|把喜歡的故事，留在自己的書架/);
+assert.doesNotMatch(app,/同一媒體類型的集數、一般版與限定版集中顯示/);
+for(const expected of ['guestStorageWarning','IndexedDB','Cookie 僅保存訪客識別','請定期備份','不代表已上架或出貨','請以商品頁為準','aria-keyshortcuts="Control+k Meta+k"','class="brand" href="#home"'])assert.ok(html.includes(expected),expected);
+assert.match(html,/未知|未辨識/);
+assert.match(html,/想買・已預購/);assert.match(html,/已持有・購入紀錄/);
+assert.match(app,/日期確認不代表實際庫存或已出貨/);
+assert.match(read('AGENTS.md'),/Avoid unnecessary secondary labels and descriptions\. Let the layout do the explaining\./);
+console.log('Concise UI copy, useful distinctions, privacy/content/date caveats and accessible labels OK');
