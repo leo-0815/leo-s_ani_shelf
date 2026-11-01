@@ -8,6 +8,7 @@ const vm = require("node:vm");
   const code = source.slice(source.indexOf("const apiInflight"), source.indexOf("function showLogin"));
   let count = 0, release, now = 0, fail = false;
   const ctx = vm.createContext({
+    window: {}, document:{documentElement:{dataset:{}}}, URLSearchParams,
     state: {user: {id: 1}, csrfToken: "csrf"},
     Date: {now: () => now},
     showLogin() {},
@@ -20,6 +21,7 @@ const vm = require("node:vm");
       return {status: 200, ok: true, json: async () => ({url})};
     },
   });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "web", "read-cache.js"), "utf8"), ctx);
   vm.runInContext(code, ctx);
   const first = ctx.api("/api/books?q=x");
   const duplicate = ctx.api("/api/books?q=x");
@@ -27,19 +29,22 @@ const vm = require("node:vm");
   assert.equal(count, 1);
   release(); await Promise.all([first, duplicate]);
   const fresh = ctx.api("/api/books?q=x");
-  assert.equal(count, 2); release(); await fresh;
+  assert.equal(count, 1); await fresh;
+  now=300000;
+  const expired=ctx.api("/api/books?q=x");assert.equal(count,2);release();await expired;
   ctx.state.contentMode='general';
   const oldMode=ctx.api('/api/books?q=mode');const oldRelease=release;
   ctx.state.contentMode='bl';
   const newMode=ctx.api('/api/books?q=mode');const newRelease=release;
   assert.notEqual(oldMode,newMode,'different visibility modes cannot reuse an in-flight response');
-  oldRelease();newRelease();await Promise.all([oldMode,newMode]);
+  const oldRejected=assert.rejects(oldMode,/偏好已變更/);
+  oldRelease();newRelease();await Promise.all([oldRejected,newMode]);
   ctx.$=()=>{throw Error('stale mode must not touch rendered statistics');};
   vm.runInContext(source.slice(source.indexOf('async function loadStats()'),source.indexOf('function selectablePublishers()')),ctx);
   const staleStats=ctx.loadStats();const statsRelease=release;
-  ctx.state.contentMode='r18';statsRelease();await staleStats;
+  ctx.state.contentMode='r18';statsRelease();await assert.rejects(staleStats,/偏好已變更/);
   const stalePublishers=ctx.loadPublishers();const publishersRelease=release;
-  ctx.state.contentMode='all';publishersRelease();await stalePublishers;
+  ctx.state.contentMode='all';publishersRelease();await assert.rejects(stalePublishers,/偏好已變更/);
   fail = true;
   await assert.rejects(ctx.api("/api/books"), /60 秒/);
   const blockedCount = count;
@@ -51,7 +56,7 @@ const vm = require("node:vm");
   ctx.state.user.id = 2;
   const otherUser = ctx.api("/api/books");
   release(); await otherUser;
-  ctx.state.user.id = 1; now = 60000;
+  ctx.state.user.id = 1; now += 60000;
   const resumed = ctx.api("/api/books");
   release(); await resumed;
   fail = {status:503,bucket:'read-overload',retry:2,resource:true};
@@ -62,10 +67,13 @@ const vm = require("node:vm");
   fail=false;
   const write=ctx.api('/api/preferences',{method:'POST',body:'{}'});release();await write;
   const metrics=ctx.api('/api/resource-guards');release();await metrics;
-  now=62000;
+  now+=2000;
   const recovered=ctx.api('/api/books');release();await recovered;
   fail={bucket:'read-budget',retry:30,resource:true};
-  await assert.rejects(ctx.api('/api/books'),/30 秒/);
+  await assert.rejects(ctx.api('/api/books?q=uncached'),/30 秒/);
+  const cachedCount=count;
+  await ctx.api('/api/books');
+  assert.equal(count,cachedCount,'fresh cached reads must work even during resource cooldown');
   const budgetCount=count;
   await assert.rejects(ctx.api('/api/recommendations'),/30 秒/);
   assert.equal(count,budgetCount);

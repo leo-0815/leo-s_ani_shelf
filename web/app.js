@@ -49,6 +49,27 @@ function syncBookPageSize() {
 
 const apiInflight = new Map();
 const apiCooldowns = new Map();
+const readCache = window.AniShelfReadCache.create();
+const viewSnapshots = new Map();
+let sessionGeneration = 0;
+let navigationGeneration = 0;
+const invalidationChannel = typeof window.BroadcastChannel === "function" ? new window.BroadcastChannel("anishelf-read-invalidation") : null;
+const cacheScope = () => `${sessionGeneration}:${state.user?.id || "anonymous"}:${state.contentMode}`;
+function countDiagnostic(name) {
+  const data = document.documentElement?.dataset;
+  if (data) data[name] = String(Number(data[name] || 0) + 1);
+}
+function invalidateReads(groups) {
+  readCache.invalidate(groups);
+  apiInflight.clear();
+}
+function mutationGroups(path) {
+  if (/^\/api\/(auth|guest\/|preferences)/.test(path)) return null;
+  if (path.startsWith("/api/notification-preferences")) return ["notification-preferences"];
+  if (/^\/api\/(wishlist|collection|series|recommendations)/.test(path))
+    return ["books", "series", "home", "stats", "upcoming", "recommendations"];
+  return [];
+}
 
 function resourceReadPath(path) {
   return /^\/api\/(books|series|book-batch|resolve|upcoming|recommendations|home|stats|publishers|quality|release-checks|export\.(json|csv)|calendar\.ics)(\/|\?|$)/.test(path.replace('/api/guest/', '/api/'));
@@ -74,16 +95,37 @@ function apiBucket(path, method) {
 function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const owner = state.user?.id || "anonymous";
+  const scope = cacheScope();
+  const generation = readCache.generation;
+  if (method === "GET") {
+    const cached = readCache.get(scope, path);
+    if (cached !== undefined) {countDiagnostic("cacheHits"); return Promise.resolve(cached);}
+  }
   const bucketKey = `${owner}:${apiBucket(path, method)}`;
   const remaining = Math.max(readCooldown(owner, path), Math.ceil(((apiCooldowns.get(bucketKey) || 0) - Date.now()) / 1000));
   if (remaining > 0) return Promise.reject(new Error(`操作較頻繁，請等待 ${remaining} 秒後再試`));
   apiCooldowns.delete(bucketKey);
-  const key = `${owner}:${state.contentMode}:${path}`;
+  const key = `${generation}:${readCache.key(scope, path)}`;
   if (method === "GET" && apiInflight.has(key)) return apiInflight.get(key);
-  const request = apiRequest(path, {...options, method}, owner);
+  const request = apiRequest(path, {...options, method}, owner).then(data => {
+    if (scope !== cacheScope()) throw new Error("登入或偏好已變更，請重新開啟此頁");
+    if (method === "GET") {
+      if (generation !== readCache.generation) throw new Error("資料已更新，請重新開啟此頁");
+      readCache.set(scope, path, data);
+    } else {
+      const groups = mutationGroups(path);
+      if (groups === null || groups.length) {
+        invalidateReads(groups);
+        if (groups === null) {viewSnapshots.clear(); state.catalogPromise = null;}
+        invalidationChannel?.postMessage({owner, groups, reset:groups === null});
+      }
+    }
+    return data;
+  });
   if (method === "GET") {
     apiInflight.set(key, request);
-    request.then(() => apiInflight.delete(key), () => apiInflight.delete(key));
+    const clean = () => {if (apiInflight.get(key) === request) apiInflight.delete(key);};
+    request.then(clean, clean);
   }
   return request;
 }
@@ -98,6 +140,7 @@ async function apiRequest(path, options, owner) {
   if (state.csrfToken && options.method && options.method !== "GET") {
     headers["X-CSRF-Token"] = state.csrfToken;
   }
+  countDiagnostic("apiRequests");
   const response = await fetch(path, {...options, headers});
   const data = await response.json().catch(() => ({}));
   if (response.status === 429 || (response.status === 503 && data.read_protection)) {
@@ -117,6 +160,10 @@ async function apiRequest(path, options, owner) {
 }
 
 function showLogin() {
+  sessionGeneration++;
+  navigationGeneration++;
+  readCache.clear();
+  viewSnapshots.clear();
   apiInflight.clear();
   apiCooldowns.clear();
   state.ready = false;
@@ -227,7 +274,14 @@ const priorityLabels = ["一般", "稍高", "優先", "必買"];
 const formatLabels = {paper: "紙本", digital: "電子書", both: "紙本＋電子"};
 const contentModeLabels = {general: "一般向", bl: "一般向＋BL", r18: "一般向＋R18", all: "全部內容"};
 function applyContentPreference(data) {
+  const previousMode = state.contentMode;
   state.contentMode = data.content_mode || (data.general_audience ? "general" : "all");
+  if (previousMode !== state.contentMode) {
+    invalidateReads(); viewSnapshots.clear(); state.catalogPromise = null;
+    state.books = []; state.series = []; state.recommendations = [];
+    for (const id of ["bookGrid", "seriesGrid", "recommendationGrid", "seriesPrompts", "upcomingList", "homeUpcoming"]) $(`#${id}`).innerHTML = "";
+    window.AniShelfHome.reset();
+  }
   state.generalAudience = state.contentMode === "general";
   $("#contentMode").value = state.contentMode;
   renderContentFilter();
@@ -415,14 +469,16 @@ $("#preferencesForm").addEventListener("submit", async event => {
 
 async function loadBooks(resetPage = false) {
   const mode = state.contentMode;
+  const view = state.view, scope = cacheScope();
   const contentSelection = $("#contentFilter").value;
   if (resetPage) state.offset = 0;
   const pageSizeChanged = syncBookPageSize();
   if (pageSizeChanged && !resetPage) {
     state.offset = Math.floor(state.offset / state.pageSize) * state.pageSize;
   }
-  const data = await api(`/api/books?${bookParams()}`);
-  if (mode !== state.contentMode || contentSelection !== $("#contentFilter").value) return;
+  const query = String(bookParams());
+  const data = await api(`/api/books?${query}`);
+  if (scope !== cacheScope() || view !== state.view || query !== String(bookParams()) || mode !== state.contentMode || contentSelection !== $("#contentFilter").value) return;
   state.books = data.items;
   state.totalBooks = data.total;
   const start = data.total ? state.offset + 1 : 0;
@@ -486,7 +542,7 @@ async function quickWishlist(bookId) {
       await api(`/api/wishlist/${bookId}`, {method: "POST", body: JSON.stringify({state: "wanted"})});
       toast("已加入訂選清單");
     }
-    await Promise.all([loadBooks(), loadStats()]);
+    await refreshCurrentView();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -618,7 +674,7 @@ async function addRelatedToWishlist(bookId, currentBookId) {
       body: JSON.stringify({state: "wanted"}),
     });
     toast("已加入想買");
-    await Promise.all([loadBooks(), loadStats()]);
+    await refreshCurrentView();
     await openDetail(currentBookId);
   } catch (error) { toast(error.message, true); }
 }
@@ -646,7 +702,7 @@ async function saveWishlist(event) {
     const saved = await api(endpoint, {method: "POST", body: JSON.stringify(payload)});
     $("#detailDialog").close();
     toast(saved.warning || (state.detailMode === "collection" ? "藏書已儲存" : (payload.state === "purchased" ? "已加入藏書，關注仍保留" : "訂選清單已儲存")));
-    await Promise.all([loadBooks(), loadStats()]);
+    await refreshCurrentView();
     if (shouldSuggestFollow) showSeriesFollowPrompt(book);
   } catch (error) { toast(error.message, true); }
 }
@@ -657,7 +713,7 @@ async function removeCollection() {
     await api(`/api/collection/${state.currentBook.collection_id}`, {method:"DELETE"});
     $("#detailDialog").close();
     toast("已移除藏書");
-    await Promise.all([loadBooks(), loadStats()]);
+    await refreshCurrentView();
   } catch(error) { toast(error.message, true); }
 }
 
@@ -666,13 +722,11 @@ async function removeWishlist() {
     await api(`/api/wishlist/${state.currentBook.id}`, {method: "DELETE"});
     $("#detailDialog").close();
     toast("已移出訂選清單");
-    await Promise.all([loadBooks(), loadStats()]);
+    await refreshCurrentView();
   } catch (error) { toast(error.message, true); }
 }
 
-async function loadSeries(resetPage = false) {
-  const mode = state.contentMode;
-  if (resetPage) state.seriesOffset = 0;
+function seriesParams() {
   const params = new URLSearchParams({
     limit: String(state.seriesPageSize),
     offset: String(state.seriesOffset),
@@ -680,8 +734,15 @@ async function loadSeries(resetPage = false) {
   const q = $("#searchInput").value.trim();
   if (q) params.set("q", q);
   addPublisherParams(params);
+  return params;
+}
+async function loadSeries(resetPage = false) {
+  const mode = state.contentMode;
+  const scope = cacheScope(), view = state.view, navigation = navigationGeneration;
+  if (resetPage) state.seriesOffset = 0;
+  const params = seriesParams();
   const data = await api(`/api/series?${params}`);
-  if (mode !== state.contentMode) return;
+  if (mode !== state.contentMode || scope !== cacheScope() || view !== state.view || navigation !== navigationGeneration || String(params) !== String(seriesParams())) return;
   state.series = data.items;
   state.totalSeries = data.total;
   const start = data.total ? state.seriesOffset + 1 : 0;
@@ -734,7 +795,7 @@ async function toggleSeriesFollow(index) {
       }),
     });
     toast(series.is_following ? "已停止追蹤系列" : "已開始追蹤系列，新書會自動加入想買");
-    await Promise.all([loadSeries(), loadStats()]);
+    await refreshCurrentView();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -778,8 +839,7 @@ async function openSeriesByValues(publisher, title, mediaType) {
         })});
         toast(following ? "系列追蹤已儲存（不覆蓋既有訂選，已收藏書籍略過）" : "已停止系列追蹤，既有訂選與藏書保留");
         $("#seriesDialog").close();
-        await Promise.all([loadBooks(),loadStats()]);
-        if (state.view === "series") await loadSeries();
+        await refreshCurrentView();
       } catch(error) {toast(error.message,true);}
     };
     $("#saveSeriesFollow").addEventListener("click", () => saveSeriesTracking(true));
@@ -891,7 +951,7 @@ async function addRecommendationToWishlist(index) {
       body: JSON.stringify({state: "wanted"}),
     });
     toast(`已將《${book.title}》加入想買`);
-    await Promise.all([loadRecommendations(), loadStats()]);
+    await refreshCurrentView();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -920,7 +980,7 @@ async function followRecommendedSeries(index) {
       }),
     });
     toast("已開始追蹤系列，新出版書目會自動加入想買");
-    await Promise.all([loadRecommendations(), loadStats()]);
+    await refreshCurrentView();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -946,8 +1006,7 @@ async function acceptSeriesFollowPrompt() {
     $("#followPromptDialog").close();
     state.pendingSeriesFollow = null;
     toast("已開始追蹤系列，新書會自動加入想買");
-    await Promise.all([loadBooks(), loadStats()]);
-    if (state.view === "recommendations") await loadRecommendations();
+    await refreshCurrentView();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -1052,9 +1111,7 @@ async function saveNotificationPreferences(event) {
 }
 
 async function loadQuality() {
-  loadReleaseChecks();
-  loadResourceGuards();
-  const data = await api("/api/quality");
+  const [data] = await Promise.all([api("/api/quality"), loadReleaseChecks(), loadResourceGuards()]);
   const coverage = $("#ratingCoverageSummary");
   if (coverage) coverage.innerHTML = '<p class="source-note">涵蓋全部出版社書目，不受瀏覽偏好限制。一般向只排除已確認 BL／R18；未知或缺少普遍級證據不再隱藏。本機與每日補查逐步補齊分類。</p><div class="release-check-grid">' +
     (data.rating_coverage || []).map(item => `<article class="quality-card"><strong>${escapeHtml(item.name)}</strong><span>全部 ${Number(item.total || 0).toLocaleString()} · 一般向可見 ${Number(item.general_audience_visible || 0).toLocaleString()}</span><span>限制級 ${Number(item.restricted || 0).toLocaleString()} · BL ${Number(item.bl || 0).toLocaleString()}</span><span>分級未知 ${Number(item.unknown || 0).toLocaleString()} · 已確認普遍級 ${Number(item.confirmed_general || 0).toLocaleString()}</span></article>`).join("") + '</div>';
@@ -1068,8 +1125,7 @@ async function loadQuality() {
   $$("[data-quality-book]").forEach(button => button.addEventListener("click", () => openDetail(Number(button.dataset.qualityBook))));
   $$("[data-quality-filter]").forEach(button => button.addEventListener("click", () => {
     const map = {missing_author: "author", missing_isbn: "isbn", missing_date: "date", unknown_type: "type", suspicious_date: "suspicious_date"};
-    state.missingFilter = map[button.dataset.qualityFilter];
-    switchView("library");
+    switchView("library", false, {missing:map[button.dataset.qualityFilter]});
   }));
 }
 
@@ -1130,10 +1186,9 @@ function pollJob(jobId) {
         $("#updateButton").innerHTML = "<span>↻</span>更新資料";
         const summary = `發現 ${job.discovered_count}、新增 ${job.inserted_count}、修改 ${job.updated_count}`;
         toast(job.status === "completed" ? `更新完成：${summary}` : `更新部分完成：${summary}`, job.status === "failed");
-        await Promise.all([loadBooks(), loadStats(), loadPublishers()]);
-        if (state.view === "series") await loadSeries();
-        if (state.view === "quality") await loadQuality();
-        if (state.view === "recommendations") await loadRecommendations();
+        invalidateReads();
+        state.catalogPromise = null;
+        await refreshCurrentView();
       }
     } catch (error) {
       clearInterval(state.jobTimer);
@@ -1168,12 +1223,46 @@ function clearFilters(reload = true) {
   if (reload) reloadFilteredView();
 }
 
-async function switchView(view, replace = false) {
+const viewFilterIds = ["searchInput", "typeFilter", "contentFilter", "statusFilter", "editionFilter", "sortFilter", "wishlistStateFilter", "ownedFormatFilter", "dateFromFilter", "dateToFilter"];
+function saveViewSnapshot() {
+  viewSnapshots.set(state.view, {scope:cacheScope(), values:Object.fromEntries(viewFilterIds.map(id => [id, $(`#${id}`).value])),
+    publishers:state.selectedPublishers === null ? null : [...state.selectedPublishers], missing:state.missingFilter,
+    offset:state.offset, seriesOffset:state.seriesOffset, scroll:window.scrollY || 0});
+}
+function restoreViewSnapshot(view) {
+  const saved = viewSnapshots.get(view);
+  const snapshot = saved?.scope === cacheScope() ? saved : null;
+  for (const id of viewFilterIds) $(`#${id}`).value = snapshot?.values[id] || "";
+  state.selectedPublishers = snapshot?.publishers === null || !snapshot ? null : [...snapshot.publishers];
+  state.missingFilter = snapshot?.missing || "";
+  state.offset = snapshot?.offset || 0;
+  state.seriesOffset = snapshot?.seriesOffset || 0;
+  renderContentFilter(); renderPublisherOptions(); renderPublisherSummary();
+  return snapshot?.scroll || 0;
+}
+async function refreshCurrentView() {
+  const view = state.view;
+  const loaders = {home:() => window.AniShelfHome.load({api,user:state.user,openBook:openDetail}),
+    library:loadBooks, wishlist:loadBooks, collection:loadBooks, series:loadSeries,
+    upcoming:loadUpcoming, recommendations:loadRecommendations, notifications:loadNotificationPreferences,
+    quality:loadQuality, preferences:loadPreferences, sources:loadPublishers};
+  await Promise.all([loaders[view]?.(), ...(view === "home" ? [] : [loadStats()])]);
+}
+async function switchView(view, replace = false, overrides = null) {
   const availableViews = ["home", "library", "wishlist", "collection", "series", "upcoming", "recommendations", "notifications", "preferences", "quality", "sources"];
   if (!availableViews.includes(view)) view = "home";
   if (!state.user?.is_admin && ["quality", "sources"].includes(view)) view = "home";
   clearTimeout(searchTimer);
+  if (state.ready) saveViewSnapshot();
   state.view = view;
+  const navigation = ++navigationGeneration;
+  let scroll = restoreViewSnapshot(view);
+  if (overrides) {
+    clearFilters(false);
+    $("#searchInput").value = overrides.search || "";
+    state.missingFilter = overrides.missing || "";
+    state.offset = 0; state.seriesOffset = 0; scroll = 0;
+  }
   if (location.hash !== `#${view}`) history[replace ? "replaceState" : "pushState"](null, "", `#${view}`);
   $$(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.view === view));
   $$(".view-section").forEach(section => section.classList.add("hidden"));
@@ -1205,19 +1294,23 @@ async function switchView(view, replace = false) {
   if (view !== "collection" && $("#sortFilter").value === "purchased_desc") $("#sortFilter").value = "";
   if (view === "collection" && !$("#sortFilter").value) $("#sortFilter").value = "purchased_desc";
   document.title = `${titles[view][1]}｜AniShelf`;
-  if (view === "home") return window.AniShelfHome.load({api, user: state.user, openBook: openDetail});
+  if (view === "home") {
+    await window.AniShelfHome.load({api, user: state.user, openBook: openDetail});
+    if (navigation === navigationGeneration) window.scrollTo?.({top:scroll});
+    return;
+  }
   try {
-    if (!state.catalogPromise) state.catalogPromise = Promise.all([loadPublishers(), loadStats()]).catch(error => { state.catalogPromise = null; throw error; });
-    await state.catalogPromise;
-    if (state.view !== view) return;
-    if (libraryMode) await loadBooks(true);
-    if (view === "series") await loadSeries(true);
+    await Promise.all([loadPublishers(), loadStats()]);
+    if (state.view !== view || navigation !== navigationGeneration) return;
+    if (libraryMode) await loadBooks();
+    if (view === "series") await loadSeries();
     if (view === "upcoming") await loadUpcoming();
     if (view === "recommendations") await loadRecommendations();
     if (view === "notifications") await loadNotificationPreferences();
     if (view === "quality") await loadQuality();
     if (view === "preferences") await loadPreferences();
-  } catch (error) { toast(error.message, true); }
+    if (navigation === navigationGeneration) window.scrollTo?.({top:scroll});
+  } catch (error) { if (navigation === navigationGeneration) toast(error.message, true); }
 }
 
 let searchTimer;
@@ -1242,9 +1335,7 @@ window.addEventListener("hashchange", () => {
   if (state.ready) switchView(location.hash.slice(1) || "home", true);
 });
 window.AniShelfHome.init({search: query => {
-  clearFilters(false);
-  $("#searchInput").value = query;
-  switchView("library");
+  switchView("library", false, {search:query});
 }});
 $("#clearFilters").addEventListener("click", () => clearFilters());
 $("#upcomingDays").addEventListener("change", () => loadUpcoming().catch(error => toast(error.message, true)));
@@ -1277,6 +1368,24 @@ $("#nextSeriesPage").addEventListener("click", () => {
   loadSeries().then(() => window.scrollTo({top: 0, behavior: "smooth"})).catch(error => toast(error.message, true));
 });
 $("#updateButton").addEventListener("click", startUpdate);
+$("#refreshViewButton").addEventListener("click", async () => {
+  invalidateReads();
+  try {await refreshCurrentView();} catch (error) {toast(error.message, true);}
+});
+if (invalidationChannel) invalidationChannel.onmessage = async event => {
+  const message = event.data;
+  if (!message || message.owner !== (state.user?.id || "anonymous")) return;
+  if (message.groups !== null && (!Array.isArray(message.groups) || !message.groups.every(value => typeof value === "string"))) return;
+  invalidateReads(message.groups);
+  if (state.user?.is_guest) window.AniShelfGuest.reset();
+  if (message.reset) {
+    viewSnapshots.clear(); sessionGeneration++;
+    $("#loginGate").classList.remove("hidden");
+    try {await loadAll();} catch (error) {toast(error.message, true);}
+  } else if (state.ready) {
+    try {await refreshCurrentView();} catch (error) {toast(error.message, true);}
+  }
+};
 $("#logoutButton").addEventListener("click", async () => {
   if (state.user?.is_guest) {
     try {
@@ -1383,7 +1492,7 @@ function showCustomCollectionForm(book = {}) {
       $("#collectionAddDialog").close();
       toast("藏書已儲存");
       state.offset = 0;
-      await Promise.all([loadBooks(), loadStats()]);
+      await refreshCurrentView();
     } catch (error) {toast(error.message, true);}
     finally {button.disabled = false;}
   });
@@ -1393,7 +1502,7 @@ function showCustomCollectionForm(book = {}) {
     try {
       await api("/api/collection/" + book.id, {method:"DELETE"});
       $("#collectionAddDialog").close();
-      await Promise.all([loadBooks(), loadStats()]);
+      await refreshCurrentView();
       toast("已移除藏書");
     } catch (error) {toast(error.message, true);}
   });

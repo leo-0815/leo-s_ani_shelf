@@ -129,5 +129,34 @@ const write=(p,payload)=>guest.api(p,{method:'POST',body:JSON.stringify(payload)
   assert.ok((await guest.read()).collection[1],'visibility change must preserve ownership');
   vm.runInContext(fs.readFileSync(path.join(__dirname,'..','web','guest.js'),'utf8'),context);
   assert.equal((await context.window.AniShelfGuest.read()).collection[1].notes,'KEEP');
-  console.log('Guest transactional storage, independent ownership, tracking, privacy, backups and reload tests OK');
+  for (const size of [100,300,1000]) {
+    saved=guest.empty();guest.reset();
+    const books=Array.from({length:size},(_,i)=>({...catalog[0],id:i+1,title:'大量系列 '+(i+1)}));
+    let failPage=size===1000, failed=false, offsets=[];
+    const largeTransport=async(url,options={})=>{
+      const u=new URL(url,'https://test.invalid');
+      if(u.pathname==='/api/guest/series/detail')return {items:books.slice(0,200),publisher_code:'test',series_title:'測試書',series_key:'series',media_type:'novel'};
+      if(u.pathname==='/api/guest/resolve') {
+        const after=JSON.parse(options.body).after;offsets.push(after);
+        if(failPage && after===200){failPage=false;failed=true;throw Error('429 rate limit');}
+        return {items:books.slice(after,after+200),has_more:after+200<size,next_after_id:Math.min(after+200,size)};
+      }
+      if(u.pathname==='/api/guest/book-batch')return {items:u.searchParams.get('ids').split(',').map(id=>books[Number(id)-1])};
+      return {items:[],total:size};
+    };
+    const result=await guest.api('/api/series/follow',{method:'POST',body:JSON.stringify({publisher:'test',series_title:'測試書',media_type:'novel',scope:'all',following:true})},largeTransport);
+    if(failed) {
+      assert.match(result.warning,/保存/);
+      assert.equal((await guest.read()).refreshCursor.after,200);
+      assert.equal(Object.keys((await guest.read()).wishlist).length,200,'partial pages committed before rate limit');
+      vm.runInContext(fs.readFileSync(path.join(__dirname,'..','web','guest.js'),'utf8'),context);
+      await context.window.AniShelfGuest.api('/api/home',{},largeTransport);
+      assert.equal(offsets.filter(x=>x===0).length,1,'reload resumes cursor, not page zero');
+    }
+    const complete=await guest.read();
+    assert.equal(Object.keys(complete.wishlist).length,size);
+    assert.equal(complete.follows[0].seen.length,size);
+    assert.equal(complete.refreshCursor,undefined);
+  }
+  console.log('Guest storage, privacy, 100/300/1000-book tracking and interrupted cursor resume OK');
 })().catch(error=>{console.error(error);process.exit(1);});

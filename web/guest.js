@@ -76,6 +76,11 @@ window.AniShelfGuest = (() => {
     if (raw.dismissed.some(id=>!Number.isSafeInteger(id) || id <= 0)) throw new Error("推薦資料格式錯誤");
     data.dismissed = [...new Set(raw.dismissed)];
     data.preferences = contentPreferences(raw.preferences);
+    if (object(raw.refreshCursor)) {
+      const cursor = raw.refreshCursor;
+      if (typeof cursor.signature !== "string" || cursor.signature.length > 50000 || !Number.isInteger(cursor.batch) || cursor.batch < 0 || cursor.batch > 100 || !Number.isSafeInteger(cursor.after) || cursor.after < 0 || !Array.isArray(cursor.ids) || cursor.ids.length > 20000 || cursor.ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("訪客續查進度格式錯誤");
+      data.refreshCursor = {signature:cursor.signature, batch:cursor.batch, after:cursor.after, ids:[...new Set(cursor.ids)]};
+    }
     data.nextId = Math.max(1, ...Object.keys(data.custom).map(Number), ...Object.values(data.collection).map(row=>row.id)) + 1;
     data.entered = raw.entered === true;
     if (object(raw.decisions)) for (const [key,value] of Object.entries(raw.decisions)) if (/^\d+$/.test(key) && ["later","imported"].includes(value)) data.decisions[key] = value;
@@ -149,38 +154,48 @@ window.AniShelfGuest = (() => {
     const current = refreshGeneration;
     refreshPromise = (async () => {
       const data=await read(), books={}, currentVisible=new Set();
+      const signature = JSON.stringify([contentPreferences(data.preferences).content_mode, data.follows.map(row => [seriesKey(row), row.scope])]);
+      const resume = data.refreshCursor?.signature === signature ? data.refreshCursor : null;
+      if (resume) for (const id of resume.ids) {if (data.books[id]) {books[id]=data.books[id]; currentVisible.add(id);}}
+      async function commit(cursor = null) {
+        return mutate(latest => {
+          if (current !== refreshGeneration) return false;
+          Object.assign(latest.books,books);
+          for (const follow of latest.follows) {
+            const seen=new Set(follow.seen);
+            for (const book of Object.values(books)) {
+              if (seriesKey(book)!==seriesKey(follow) || book.release_status==="cancelled" || (follow.scope==="future" && book.release_status!=="scheduled") || seen.has(book.id)) continue;
+              seen.add(book.id);
+              const id=localBookId(book,latest);
+              if (!latest.collection[id] && !latest.wishlist[id]) latest.wishlist[id]={...ownership({}),state:"wanted",priority:0};
+            }
+            follow.seen=[...seen];
+          }
+          if (cursor) latest.refreshCursor = {...cursor, signature, ids:[...currentVisible]};
+          else delete latest.refreshCursor;
+          return true;
+        });
+      }
       const ids=[...new Set([...Object.keys(data.wishlist),...Object.keys(data.collection)].map(Number))];
       for (let offset=0;offset<ids.length;offset+=50) {
         const rows=await publicRead("/api/book-batch?ids="+ids.slice(offset,offset+50).join(","),transport,data);
         if (current !== refreshGeneration) return;
         rows.items.forEach(book=>{books[book.id]=book; currentVisible.add(book.id);});
       }
-      for (let offset=0;offset<data.follows.length;offset+=20) {
-        const series=data.follows.slice(offset,offset+20); let after=0, pages=0;
+      for (let offset=resume?.batch || 0;offset<data.follows.length;offset+=20) {
+        const series=data.follows.slice(offset,offset+20); let after=offset === resume?.batch ? resume.after : 0, pages=0;
         while (true) {
           const rows=await network("/api/guest/resolve",transport,{method:"POST",body:JSON.stringify({series,after,content_mode:contentPreferences(data.preferences).content_mode})});
           if (current !== refreshGeneration) return;
           rows.items.forEach(book=>{books[book.id]=book; currentVisible.add(book.id);});
+          if (rows.has_more && rows.next_after_id <= after) throw new Error("訪客續查游標未前進，請稍後重試");
+          await commit(rows.has_more ? {batch:offset,after:rows.next_after_id} : {batch:offset+20,after:0});
           if (!rows.has_more) break;
-          if (++pages>=20 || rows.next_after_id<=after) throw new Error("系列書目較多，請稍後再更新訪客追蹤");
+          if (++pages>=20) throw new Error("追蹤設定與續查進度已保存，請稍後再更新訪客書架");
           after=rows.next_after_id;
         }
       }
-      const committed = await mutate(latest=>{
-        if (current !== refreshGeneration) return false;
-        Object.assign(latest.books,books);
-        for (const follow of latest.follows) {
-          const seen=new Set(follow.seen);
-          for (const book of Object.values(books)) {
-            if (seriesKey(book)!==seriesKey(follow) || book.release_status==="cancelled" || (follow.scope==="future" && book.release_status!=="scheduled") || seen.has(book.id)) continue;
-            seen.add(book.id);
-            const id=localBookId(book,latest);
-            if (!latest.collection[id] && !latest.wishlist[id]) latest.wishlist[id]={...ownership({}),state:"wanted",priority:0};
-          }
-          follow.seen=[...seen];
-        }
-        return true;
-      });
+      const committed = await commit();
       if (committed && current === refreshGeneration) {visible=currentVisible; refreshedAt=Date.now();}
     })().finally(()=>refreshPromise=null);
     return refreshPromise;
