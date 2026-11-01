@@ -10,6 +10,34 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS catalog_recent_scans (
+    publisher_code VARCHAR(30) NOT NULL PRIMARY KEY,
+    last_attempt_at DATETIME NULL,
+    last_success_at DATETIME NULL,
+    lease_until DATETIME NULL,
+    last_error VARCHAR(1000) NULL,
+    pages_scanned INT NOT NULL DEFAULT 0,
+    queued_count INT NOT NULL DEFAULT 0,
+    budget_day DATE NULL,
+    attempted_today INT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS catalog_product_retries (
+    publisher_code VARCHAR(30) NOT NULL,
+    url_hash CHAR(64) NOT NULL,
+    source_url VARCHAR(1000) NOT NULL,
+    media_hint VARCHAR(20) NULL,
+    seed_json TEXT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    attempts INT NOT NULL DEFAULT 0,
+    first_seen_at DATETIME NOT NULL,
+    last_attempt_at DATETIME NULL,
+    next_attempt_at DATETIME NOT NULL,
+    last_error VARCHAR(1000) NULL,
+    PRIMARY KEY (publisher_code,url_hash),
+    KEY idx_product_retry_due (publisher_code,status,next_attempt_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS publishers (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     code VARCHAR(40) NOT NULL,

@@ -160,10 +160,14 @@ class KadokawaSource:
                         records.append(record)
                     elif record:
                         self.skipped_count += 1
-                except ValueError:
+                except ValueError as exc:
                     self.skipped_count += 1
+                    from .common import product_failure
+                    product_failure(self, futures[future], exc, hint=media_hint)
                 except Exception as exc:
                     self.errors.append(f"{futures[future]}：{exc}")
+                    from .common import product_failure
+                    product_failure(self, futures[future], exc, hint=media_hint)
         records.sort(key=lambda record: (record.release_date or date.min, record.title))
         return records
 
@@ -172,7 +176,10 @@ class KadokawaSource:
         url: str,
         media_hint: str | None = None,
     ) -> BookRecord | None:
-        return self._parse_detail(url, self._fetch(url), media_hint=media_hint)
+        record = self._parse_detail(url, self._fetch(url), media_hint=media_hint)
+        from .common import product_success
+        product_success(self, url)
+        return record
 
     def _fetch(self, url: str) -> str:
         self._limiter.wait()

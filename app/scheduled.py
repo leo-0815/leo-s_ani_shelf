@@ -7,6 +7,7 @@ from .config import get_settings
 from .crawler import get_job, run_incremental_sources
 from .db import ensure_schema
 from .rating_refresh import refresh_recent_ratings
+from .recent_recheck import run_recent_rechecks
 from .notifications import (
     NotificationError,
     crawl_status_event,
@@ -28,9 +29,12 @@ def main() -> None:
     try:
         rating_result = refresh_recent_ratings()
     except Exception as exc:
-        # Fail-closed visibility still blocks unconfirmed books; preserve notifications.
+        # Preserve notifications if the independent grading pass fails.
         rating_result = {"error": str(exc)}
-    status_event = crawl_status_event(job)
+    try:
+        recent_result = run_recent_rechecks()
+    except Exception as exc:
+        recent_result = {"error": str(exc)}
     email_failure = None
     try:
         email_result = deliver_email_notifications(
@@ -43,6 +47,13 @@ def main() -> None:
     except NotificationError as exc:
         email_failure = str(exc)
         email_result = {"enabled": True, "error": email_failure}
+    recent_warnings = [code for code, result in recent_result.items()
+                       if isinstance(result, dict) and result.get("warning")]
+    status_job = dict(job)
+    if recent_result.get("error") or recent_warnings:
+        status_job["status"] = "failed" if job.get("status") == "failed" else "partial"
+        status_job["message"] = "近期防漏複查需注意：" + (str(recent_result.get("error")) or "、".join(recent_warnings)) + "\n" + str(job.get("message") or "")
+    status_event = crawl_status_event(status_job)
     extra_events = [event for event in (status_event,) if event]
     if email_failure:
         extra_events.append(email_status_event(job_id, email_failure))
@@ -55,13 +66,14 @@ def main() -> None:
     )
     print(
         json.dumps(
-            {"job": job, "rating_refresh": rating_result, "discord": discord_result, "email": email_result},
+            {"job": job, "rating_refresh": rating_result, "recent_recheck": recent_result,
+             "discord": discord_result, "email": email_result},
             ensure_ascii=False,
             default=str,
             indent=2,
         )
     )
-    if job.get("status") == "failed" or email_failure:
+    if job.get("status") in {"partial", "failed"} or email_failure or recent_result.get("error") or recent_warnings:
         raise SystemExit(1)
 
 

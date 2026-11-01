@@ -103,6 +103,20 @@ def polite_pause(seconds: float = 0.6) -> None:
     time.sleep(seconds)
 
 
+def product_failure(source, url: str, error: Exception, *, seed=None, hint=None) -> None:
+    """Optional scheduled-run hook; historical/local parsers need no queue DB."""
+    recorder = getattr(source, "record_product_failure", None)
+    if recorder:
+        recorder(url, str(error), seed, hint)
+
+
+def product_success(source, url: str) -> None:
+    successes = getattr(source, "product_fetch_successes", None)
+    if successes is None:
+        source.product_fetch_successes = successes = set()
+    successes.add(url)
+
+
 class RateLimiter:
     """Share a conservative request start-rate across a small worker pool."""
 
