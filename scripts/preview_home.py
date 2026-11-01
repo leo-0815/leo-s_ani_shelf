@@ -25,7 +25,12 @@ class Preview(Handler):
         elif route == "/api/home": self._json({"date":"2030-10-09","counts":{"wishlist":12,"collection":36,"followed_series":8},"items":BOOKS})
         elif route == "/api/publishers": self._json({"items":[]})
         elif route == "/api/stats": self._json(dict.fromkeys(["total","scheduled","available","unknown","scheduled_undated","wishlist","followed_series","purchased","purchased_paper","purchased_digital","purchased_series","purchased_spend"],0))
-        elif route == "/api/books": self._json({"items":[],"total":0})
+        elif route == "/api/books": self._json({"items":BOOKS,"total":len(BOOKS)})
+        elif route == "/api/series": self._json({"items":[],"total":0})
+        elif route == "/api/upcoming": self._json({"items":BOOKS})
+        elif route == "/api/recommendations": self._json({"items":[],"series_prompts":[],"purchased_count":0,"followed_count":0})
+        elif route == "/api/preferences": self._json({"content_mode":"general","general_audience":True})
+        elif route == "/api/notification-preferences": self._json({"email":USER["email"],"email_enabled":False,"lead_days":[],"email_configured":False})
         elif route.startswith("/api/"): self._json({"error":"Preview fixture only"},404)
         else: self._static(route)
 
