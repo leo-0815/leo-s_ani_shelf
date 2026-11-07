@@ -160,6 +160,7 @@ async function apiRequest(path, options, owner) {
 }
 
 function showLogin() {
+  window.AniShelfMobileNavigation?.close();
   sessionGeneration++;
   navigationGeneration++;
   readCache.clear();
@@ -1263,7 +1264,10 @@ async function switchView(view, replace = false, overrides = null) {
     state.offset = 0; state.seriesOffset = 0; scroll = 0;
   }
   if (location.hash !== `#${view}`) history[replace ? "replaceState" : "pushState"](null, "", `#${view}`);
-  $$(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.view === view));
+  $$(".nav-item").forEach(item => {
+    item.classList.toggle("active", item.dataset.view === view);
+    item.setAttribute("aria-current", item.dataset.view === view ? "page" : "false");
+  });
   $$(".view-section").forEach(section => section.classList.add("hidden"));
   const libraryMode = ["library", "wishlist", "collection"].includes(view);
   $("#catalogStats").classList.toggle("hidden", view === "home");
@@ -1535,5 +1539,6 @@ window.addEventListener("resize", () => {
 });
 
 window.AniShelfGuestUi.init();
+window.AniShelfMobileNavigation?.init();
 loadAll()
   .catch(error => toast(error.message, true));

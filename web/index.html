@@ -19,8 +19,15 @@
         <small class="hidden" id="loginUnavailable">站長尚未完成 Google 登入設定。</small>
       </div>
     </section>
+    <header class="mobile-navigation">
+      <button id="mobileNavOpen" type="button" aria-label="開啟頁面選單" aria-controls="mobileNavDialog" aria-expanded="false"><span aria-hidden="true">☰</span></button>
+      <a href="#home" aria-label="AniShelf 首頁">AniShelf</a>
+    </header>
+    <dialog id="mobileNavDialog" class="mobile-nav-dialog" aria-label="頁面選單">
+      <div class="mobile-nav-heading"><strong>頁面選單</strong><button id="mobileNavClose" type="button" aria-label="關閉頁面選單" autofocus>×</button></div>
+    </dialog>
     <div class="shell">
-      <aside class="sidebar">
+      <aside class="sidebar" id="siteNavigation">
         <a class="brand" href="#home" aria-label="AniShelf 首頁">
           <span class="brand-mark">A</span>
           <span><strong>AniShelf</strong><small>出版追蹤書架</small></span>
@@ -398,6 +405,7 @@
     <script src="/guest.js" defer></script>
     <script src="/guest-ui.js" defer></script>
     <script src="/read-cache.js" defer></script>
+    <script src="/mobile-navigation.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
