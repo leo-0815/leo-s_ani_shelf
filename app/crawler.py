@@ -200,7 +200,8 @@ def _run_job(
                 if source_errors:
                     _mark_source(code, f"有 {source_errors} 筆資料寫入失敗")
                 elif fetch_errors:
-                    _mark_source(code, f"有 {fetch_errors} 個商品頁下載失敗")
+                    _mark_source(code, getattr(source, "schedule_error", None)
+                                 or f"有 {fetch_errors} 個商品頁下載失敗")
                 else:
                     save_sync_state(
                         code,

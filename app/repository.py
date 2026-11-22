@@ -255,7 +255,12 @@ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[
     # Missing tags / older clients cannot clear an explicit official BL category.
     if not result.get("bl_category") and existing.get("bl_category"):
         result["bl_category"] = existing.get("bl_category")
-    if "docs.google.com/spreadsheets/" in str(data.get("source_url") or ""):
+    from urllib.parse import urlsplit
+    schedule_url = urlsplit(str(data.get("source_url") or ""))
+    spp_schedule = (data.get("publisher_code") == "spp" and
+                    schedule_url.hostname == "event.spp.com.tw" and
+                    schedule_url.path == "/event/publish.aspx")
+    if spp_schedule or "docs.google.com/spreadsheets/" in str(data.get("source_url") or ""):
         for field in ("author", "isbn", "cover_url", "list_price", *RATING_FIELDS):
             if result.get(field) in {None, "", "unknown", 0}:
                 result[field] = existing.get(field)

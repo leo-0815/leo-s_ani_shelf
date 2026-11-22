@@ -37,6 +37,7 @@ class SppSource:
         self._limiter = RateLimiter(self.requests_per_second)
         self.errors: list[str] = []
         self.skipped_count = 0
+        self.schedule_error: str | None = None
 
     def collect(
         self,
@@ -69,7 +70,8 @@ class SppSource:
             records = collect_official_schedule(self._parse_schedule)
             records = self._enrich_schedule(records)
         except RuntimeError as exc:
-            self.errors.append(str(exc))
+            self.schedule_error = f"官方出書表不可用，已使用商品頁備援：{exc}"
+            self.errors.append(self.schedule_error)
             # A bounded catalog fallback keeps known/new releases flowing during schedule outages.
             urls = self._recent_catalog_urls(80)
             records = [record for record, _date in self._fetch_catalog_batch(urls) if record]
