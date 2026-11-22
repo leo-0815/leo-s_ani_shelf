@@ -239,6 +239,12 @@ def _apply_series_alias_to_data(
 def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     """Keep an administrator's rating while still accepting fresh publisher metadata."""
     result = dict(data)
+    # Tohan public cards contain no authoritative type/author/ISBN/date/rating.
+    # Only fill a missing cover; a later detail record upgrades the same source ID.
+    if data.get("publisher_code") == "tohan" and data.get("media_type") == "unknown":
+        for field in BOOK_FIELDS:
+            if field != "cover_url" or existing.get(field):
+                result[field] = existing.get(field)
     if data.get("publisher_code") == "chingwin":
         from .book_identity import merge_chingwin_metadata
         result = merge_chingwin_metadata(existing, result)

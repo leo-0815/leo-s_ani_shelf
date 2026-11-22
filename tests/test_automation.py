@@ -19,6 +19,8 @@ class ScheduledWorkflowTests(unittest.TestCase):
         self.assertIn("test_database_only:", self.workflow)
         self.assertIn("migrate_database_only:", self.workflow)
         self.assertIn("test_email_user_id:", self.workflow)
+        self.assertIn("test_publisher_only:", self.workflow)
+        self.assertIn('python -m app.publisher_check "$ANISHELF_PUBLISHER"', self.workflow)
 
     def test_workflow_runs_the_combined_update_and_notification_command(self) -> None:
         self.assertIn("python -m app.scheduled", self.workflow)

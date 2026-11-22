@@ -51,6 +51,9 @@ def candidates(limit: int, keys: list[str] | None = None, *, dry_run: bool = Fal
         clause += " AND (b.release_date BETWEEN %s AND %s OR (b.release_date IS NULL AND b.first_seen_at >= %s))"
         since = datetime.utcnow() - timedelta(days=recent_days)
         values.extend([since.date(), (datetime.utcnow()+timedelta(days=90)).date(), since])
+    if not dry_run:
+        from .recent_recheck import tohan_retry_filter
+        clause += tohan_retry_filter(code)
     join = ""
     if not dry_run:
         join = " LEFT JOIN book_rating_checks r ON r.book_id = b.id"
@@ -129,11 +132,17 @@ def check_book(row: dict, *, dry_run: bool = False) -> tuple[str, str | None, st
         if not product_url_valid(code, url, row["source_key"]):
             raise ValueError("No edition-specific official product URL; kept unknown")
         markup = fetch_html(url, timeout=20, attempts=2)
+        if code == "tohan":
+            from .sources.tohan_public import require_public_product
+            require_public_product(markup)
         rating, raw = parse_rating(code, url, markup,
                                    row["source_key"], row.get("isbn"))
         bl_category = parse_bl_category(code, url, markup, row["source_key"])
     except Exception as exc:
         error = str(exc)
+        if code == "tohan" and not dry_run:
+            from .recent_recheck import enqueue
+            enqueue(code, [(url, row.get("media_type"), None)], error=error)
     # An interrupted request cannot mark the item as completed.
     changed = False if dry_run else save_result(int(row["id"]), rating, raw, error, code=code,
                                               checked_at=observed_at, bl_category=bl_category)

@@ -153,6 +153,7 @@ def parse_product(source: Any, row: dict, markup: str) -> BookRecord:
                    release_checked_at=datetime.utcnow().replace(microsecond=0))
 
 def candidates(code: str, limit: int, now: datetime) -> list[dict]:
+    from .recent_recheck import tohan_retry_filter
     today = now.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
     with transaction() as connection:
         with connection.cursor() as cursor:
@@ -166,6 +167,7 @@ def candidates(code: str, limit: int, now: datetime) -> list[dict]:
                 "AND (b.release_checked_at IS NULL OR b.release_checked_at <= %s) "
                 "AND (REPLACE(b.source_url, 'http://', 'https://') LIKE %s "
                 "OR REPLACE(b.source_url, 'http://', 'https://') LIKE %s) "
+                + tohan_retry_filter(code) +
                 # Oldest attempts first prevents an overdue subset starving the rest.
                 "ORDER BY COALESCE(rc.attempted_at, '1970-01-01'), "
                 "(b.release_status = 'scheduled' AND b.release_date < %s) DESC, b.id "
@@ -252,5 +254,8 @@ def refresh_source(source: Any, limit: int = DEFAULT_LIMIT) -> dict:
             stats["errors"].append(message)
             # Failed requests retain old metadata and retry no sooner than tomorrow.
             record_attempt(row["id"], now, now + timedelta(days=1), message)
+            if source.code == "tohan":
+                from .sources.common import product_failure
+                product_failure(source, row["source_url"], exc)
     return stats
 
