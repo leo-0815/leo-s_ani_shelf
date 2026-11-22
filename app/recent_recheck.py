@@ -98,6 +98,33 @@ def attach_failure_recorder(source) -> None:
     def record(url: str, error: str, seed: BookRecord | None = None, hint: str | None = None):
         enqueue(source.code, [(url, hint or getattr(seed, "media_type", None), asdict(seed) if seed else None)], error=error)
     source.record_product_failure = record
+    if source.code == "tohan":
+        source.should_fetch_product = lambda url: product_retry_due(source.code, url)
+
+
+def product_retry_due(code: str, url: str, now: datetime | None = None) -> bool:
+    """All scheduled Tohan passes respect the durable product queue's cooldown."""
+    canonical = canonical_product(code, url)
+    if not canonical:
+        return False
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT next_attempt_at FROM catalog_product_retries "
+                           "WHERE publisher_code=%s AND url_hash=%s AND status='pending'",
+                           (code, hashlib.sha256(canonical.encode()).hexdigest()))
+            row = cursor.fetchone()
+    next_at = row["next_attempt_at"] if row else None
+    if isinstance(next_at, str):
+        next_at = datetime.fromisoformat(next_at)
+    return not next_at or next_at <= (now or datetime.utcnow())
+
+
+def tohan_retry_filter(code: str) -> str:
+    # Exact canonical identity; tracking/category query strings do not split backoff.
+    return (" AND NOT EXISTS (SELECT 1 FROM catalog_product_retries pr "
+            "WHERE pr.publisher_code='tohan' AND pr.status='pending' "
+            "AND pr.url_hash=SHA2(CONCAT('https://www.tohan.com.tw/product.php?act=view&id=',b.source_key),256) "
+            "AND pr.next_attempt_at>UTC_TIMESTAMP())") if code == "tohan" else ""
 
 
 def acknowledge_saved(source, record: BookRecord) -> None:
@@ -262,12 +289,14 @@ def claim_product(code: str, now: datetime) -> dict | None:
 
 
 def finish_product(row: dict, *, error: str | None = None, ignored: bool = False) -> None:
+    from .sources.tohan_public import LOGIN_ERROR
+    days = 7 if error == LOGIN_ERROR else min(2 ** min(row["attempts"] - 1, 3), 7)
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute("UPDATE catalog_product_retries SET status=%s,last_error=%s,next_attempt_at=%s "
                            "WHERE publisher_code=%s AND url_hash=%s",
                            ("pending" if error else "ignored" if ignored else "done", error[:1000] if error else None,
-                            datetime.utcnow() + timedelta(days=min(2 ** min(row["attempts"] - 1, 3), 7)),
+                            datetime.utcnow() + timedelta(days=days),
                             row["publisher_code"], row["url_hash"]))
 
 

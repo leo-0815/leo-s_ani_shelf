@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
 from .common import fetch_html, parse_page, polite_pause, unique
+from .tohan_public import public_seeds, require_public_product
 
 
 class TohanSource:
@@ -28,7 +29,9 @@ class TohanSource:
     ) -> list[BookRecord]:
         known_keys = known_keys or set()
         start_url = self.catalog_url if backfill else self.list_url
-        first_listing = parse_page(fetch_html(start_url))
+        first_markup = fetch_html(start_url)
+        first_listing = parse_page(first_markup)
+        seeds = public_seeds(start_url, first_markup)
         page_urls = [start_url]
         if backfill:
             page_urls.extend(
@@ -38,13 +41,17 @@ class TohanSource:
             )
         urls: list[str] = []
         for index, page_url in enumerate(unique(page_urls)):
-            listing = first_listing if index == 0 else parse_page(fetch_html(page_url))
+            markup = first_markup if index == 0 else fetch_html(page_url)
+            listing = first_listing if index == 0 else parse_page(markup)
+            seeds.update(public_seeds(page_url, markup))
             for href, _ in listing.links:
                 absolute = urljoin(page_url, href)
                 parsed = urlparse(absolute)
                 query = parse_qs(parsed.query)
                 source_id = query.get("id", [""])[0]
-                if parsed.path.endswith("/product.php") and query.get("act") == ["view"] and source_id:
+                if (parsed.scheme in {"http", "https"} and parsed.hostname == "www.tohan.com.tw"
+                        and not parsed.port and not parsed.username and parsed.path == "/product.php"
+                        and query.get("act") == ["view"] and source_id.isdigit()):
                     if source_id not in known_keys:
                         urls.append(absolute)
             if index + 1 < len(page_urls):
@@ -55,6 +62,13 @@ class TohanSource:
         if not backfill:
             candidates = candidates[: self.max_items]
         for url in candidates:
+            key = parse_qs(urlparse(url).query)["id"][0]
+            seed = seeds.get(key)
+            allowed = getattr(self, "should_fetch_product", None)
+            if allowed and not allowed(url):
+                if seed:
+                    records.append(seed)
+                continue
             polite_pause()
             try:
                 records.append(self._parse_detail(url, fetch_html(url)))
@@ -63,12 +77,15 @@ class TohanSource:
             except Exception as exc:
                 self.errors.append(f"{url}：{exc}")
                 from .common import product_failure
-                product_failure(self, url, exc)
+                product_failure(self, url, exc, seed=seed)
+                if seed:
+                    records.append(seed)
         if not records and not known_keys:
             raise RuntimeError("台灣東販商品清單沒有解析到有效書目")
         return records
 
     def _parse_detail(self, url: str, markup: str) -> BookRecord:
+        require_public_product(markup)
         page = parse_page(markup)
         first_line = page.text.splitlines()[0] if page.text.splitlines() else ""
         title = page.meta.get("og:title", "").split("_")[0].strip()
