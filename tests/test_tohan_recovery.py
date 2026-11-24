@@ -16,6 +16,7 @@ GATE = '<script>alert("您必須先登入會員才能執行這個動作");window
 CARD = '''<a href="product.php?act=view&amp;cid=107&amp;id=8768" title="不用此標籤猜資料">
 <img src="data/goods/gallery/cover.jpg"><p class="g-bookName">測試漫畫 2 特裝版</p>
 <p class="g-subTit">不是作者，也不是分級</p><p class="g-prize">優惠價 NT$119</p></a>'''
+CARD = '<div class="tab-pane active gobal-warp">' + CARD + '</div>'
 
 
 class TohanRecoveryTests(unittest.TestCase):
@@ -46,6 +47,7 @@ class TohanRecoveryTests(unittest.TestCase):
     def test_failed_detail_saves_seed_and_keeps_retry_pending(self, fetch, pause):
         fetch.side_effect = [CARD, GATE]
         source = TohanSource()
+        source.category_urls = ((None, LIST),)
         source.record_product_failure = MagicMock()
         rows = source.collect()
         self.assertEqual(len(rows), 1)
@@ -58,6 +60,7 @@ class TohanRecoveryTests(unittest.TestCase):
     @patch('app.sources.tohan.fetch_html', return_value=CARD)
     def test_backoff_skips_product_but_retains_public_seed(self, fetch, pause):
         source = TohanSource()
+        source.category_urls = ((None, LIST),)
         source.should_fetch_product = lambda url: False
         self.assertEqual(source.collect()[0].media_type, 'unknown')
         fetch.assert_called_once_with(LIST)

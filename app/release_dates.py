@@ -140,6 +140,8 @@ def parse_product(source: Any, row: dict, markup: str) -> BookRecord:
         record = source._parse_detail(url, markup, media_hint=row["media_type"])
     elif source.code == "spp":
         record, _ = source._parse_detail(url, markup, enforce_cutoff=False)
+    elif source.code == 'tohan':
+        record = source._parse_detail(url, markup, media_hint=row['media_type'], strict_hint=False)
     else:
         record = source._parse_detail(url, markup)
     if record is None or record.source_key != key or record.publisher_code != source.code:

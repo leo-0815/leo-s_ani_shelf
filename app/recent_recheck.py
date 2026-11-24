@@ -100,6 +100,17 @@ def attach_failure_recorder(source) -> None:
     source.record_product_failure = record
     if source.code == "tohan":
         source.should_fetch_product = lambda url: product_retry_due(source.code, url)
+        # Attachment happens outside the per-source error boundary. Defer DB
+        # reads until collect(), so a transient TiDB error cannot abort all sources.
+        source.listing_upgrade_keys = tohan_unknown_keys
+
+
+def tohan_unknown_keys() -> set[str]:
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT b.source_key FROM books b JOIN publishers p ON p.id=b.publisher_id "
+                           "WHERE p.code='tohan' AND b.media_type='unknown'")
+            return {row['source_key'] for row in cursor.fetchall()}
 
 
 def product_retry_due(code: str, url: str, now: datetime | None = None) -> bool:
@@ -227,33 +238,34 @@ def scan_recent(source, *, deadline: float, progress: dict | None = None) -> dic
                 if not urls:
                     break
     elif code == "tohan":
-        pending = [source.list_url]
+        from .sources.tohan_public import public_seeds
+        pending = [(hint, url) for hint, url in source.category_urls]
         seen = set()
         while pending and len(seen) < PAGES:
-            url = pending.pop(0)
+            hint, url = pending.pop(0)
             if url in seen:
                 continue
             seen.add(url)
-            listing = parse_page(save(url))
-            products = [urljoin(url, href) for href, _ in listing.links if canonical_product(code, urljoin(url, href))]
-            if len(seen) == 1 and not products:
+            markup = save(url)
+            cards = public_seeds(url, markup, hint)
+            if not cards:
                 raise ValueError("東販近期清單未辨識到商品，不標記複查完成")
-            put([(u, None, None) for u in products])
+            put([(r.source_url, hint, asdict(r)) for r in cards.values()])
             # Follow actual same-category pagination, never guess a catalog URL.
-            for href, _ in listing.links:
+            for href, _ in parse_page(markup).links:
                 target = urlsplit(urljoin(url, href))
                 query = parse_qs(target.query)
                 if (target.scheme in {"http", "https"} and target.netloc == "www.tohan.com.tw"
-                        and target.path == "/product.php" and query.get("cid") == ["107"]
+                        and target.path == "/product.php" and query.get("cid") == parse_qs(urlsplit(url).query).get('cid')
                         and "page" in query and query.get("act", ["list"]) == ["list"]):
                     try:
                         page = int(query["page"][0])
                     except ValueError:
                         continue
                     if 2 <= page <= PAGES:
-                        page_url = "https://www.tohan.com.tw/product.php?" + urlencode({"act": "list", "cid": "107", "page": page})
-                        if page_url not in seen and page_url not in pending:
-                            pending.append(page_url)
+                        page_url = "https://www.tohan.com.tw/product.php?" + urlencode({"act": "list", "cid": query['cid'][0], "page": page})
+                        if page_url not in seen and (hint, page_url) not in pending:
+                            pending.append((hint, page_url))
     elif code == "spp":
         if time.monotonic() >= deadline:
             raise TimeoutError("近期複查時間不足")
@@ -332,9 +344,15 @@ def fetch_product(source, row: dict) -> BookRecord | None:
         record = source._parse_detail(url, markup, media_hint=row["media_hint"])
     elif code == "spp":
         record, _ = source._parse_detail(url, markup, enforce_cutoff=False)
+    elif code == 'tohan':
+        from .sources.tohan_public import UnsupportedTohanProduct
+        try:
+            record = source._parse_detail(url, markup, media_hint=row['media_hint'], strict_hint=False)
+        except UnsupportedTohanProduct:
+            return None
     else:
         record = source._parse_detail(url, markup)
-    return record if record and record.media_type in {"manga", "novel"} else None
+    return record if record and record.media_type in ({"manga", "novel", "unknown"} if code == 'tohan' else {"manga", "novel"}) else None
 
 
 def backlog(code: str, now: datetime | None = None) -> dict:

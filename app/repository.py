@@ -160,7 +160,7 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
             write_data = (
                 _sync_write_data(existing, data)
                 if change_origin in {"cloud_pull", "sync_upload"}
-                else _crawler_write_data(existing, data)
+                else _crawler_write_data(existing, data, listing_only=_tohan_listing_record(record))
             )
             if record.publisher_code == "chingwin" and not migrate_source_key:
                 write_data["source_key"] = existing["source_key"]
@@ -236,15 +236,24 @@ def _apply_series_alias_to_data(
         data["series_key"] = alias["canonical_key"]
 
 
-def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+def _tohan_listing_record(record: BookRecord) -> bool:
+    from .sources.tohan_public import ListingRecord
+    return isinstance(record, ListingRecord)
+
+
+def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any], *, listing_only: bool = False) -> dict[str, Any]:
     """Keep an administrator's rating while still accepting fresh publisher metadata."""
     result = dict(data)
     # Tohan public cards contain no authoritative type/author/ISBN/date/rating.
-    # Only fill a missing cover; a later detail record upgrades the same source ID.
-    if data.get("publisher_code") == "tohan" and data.get("media_type") == "unknown":
+    # Fill a missing cover/type only; a later detail upgrades the same source ID.
+    if data.get("publisher_code") == "tohan" and (listing_only or data.get("media_type") == "unknown"):
         for field in BOOK_FIELDS:
+            if (field == 'media_type' and listing_only and existing.get(field) == 'unknown'
+                    and data.get(field) in {'manga','novel'}):
+                continue
             if field != "cover_url" or existing.get(field):
                 result[field] = existing.get(field)
+        result['normalized_title'] = normalize_text(result.get('title') or '').casefold()
     if data.get("publisher_code") == "chingwin":
         from .book_identity import merge_chingwin_metadata
         result = merge_chingwin_metadata(existing, result)
