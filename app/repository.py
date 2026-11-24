@@ -160,7 +160,8 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
             write_data = (
                 _sync_write_data(existing, data)
                 if change_origin in {"cloud_pull", "sync_upload"}
-                else _crawler_write_data(existing, data, listing_only=_tohan_listing_record(record))
+                else _crawler_write_data(existing, data, listing_only=_tohan_listing_record(record),
+                                         preserve_tohan_type=record.publisher_code == 'tohan')
             )
             if record.publisher_code == "chingwin" and not migrate_source_key:
                 write_data["source_key"] = existing["source_key"]
@@ -241,7 +242,8 @@ def _tohan_listing_record(record: BookRecord) -> bool:
     return isinstance(record, ListingRecord)
 
 
-def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any], *, listing_only: bool = False) -> dict[str, Any]:
+def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any], *, listing_only: bool = False,
+                        preserve_tohan_type: bool = False) -> dict[str, Any]:
     """Keep an administrator's rating while still accepting fresh publisher metadata."""
     result = dict(data)
     # Tohan public cards contain no authoritative type/author/ISBN/date/rating.
@@ -265,6 +267,12 @@ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any], *, listi
         for field in ('author','isbn','cover_url','list_price'):
             if result.get(field) in {None, ''} and existing.get(field) not in {None, ''}:
                 result[field] = existing[field]
+    if (preserve_tohan_type and data.get('publisher_code') == 'tohan'
+            and existing.get('media_type') in {'manga','novel'}
+            and result.get('media_type') in {'manga','novel'}):
+        # Legacy misclassification needs a reviewed migration of series follows,
+        # not a silent category move during an unrelated date/detail refresh.
+        result['media_type'] = existing['media_type']
     if data.get("publisher_code") == "chingwin":
         from .book_identity import merge_chingwin_metadata
         result = merge_chingwin_metadata(existing, result)

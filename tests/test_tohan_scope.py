@@ -88,6 +88,12 @@ class TohanScopeTests(unittest.TestCase):
         self.assertEqual(merged['isbn'],'9781234567890')
         self.assertEqual(merged['title'],'正式商品書名')
 
+    def test_crawler_does_not_silently_move_existing_series_type_but_peers_can_apply_reviewed_changes(self):
+        old=BookRecord('tohan','8768','舊書名','novel',URL).prepared()
+        detail=BookRecord('tohan','8768','正式商品','manga',URL,isbn='9781234567890').prepared()
+        self.assertEqual(_crawler_write_data(old,detail,preserve_tohan_type=True)['media_type'],'novel')
+        self.assertEqual(_crawler_write_data(old,detail)['media_type'],'manga')
+
     @patch('app.sources.tohan.polite_pause')
     @patch('app.sources.tohan.fetch_html')
     def test_collect_ignores_all_link_recommendation_and_deduplicates_typed_lists(self, fetch, pause):
