@@ -1,3 +1,4 @@
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6,6 +7,20 @@ from app import history_cli, series_backfill as series
 
 
 class SeriesBackfillTests(unittest.TestCase):
+    def test_kadokawa_variant_uses_only_individual_verified_isbn(self):
+        row = dict(code="kadokawa", title="示範", series_key=series.series_key("示範", "kadokawa"), media_type="novel")
+        data = {"title_translations": {"zh-hant": "示範 系列 【小說】"},
+                "summary_translations": {"zh-hant": "上市日期：2024/07/25"},
+                "variations": [{"gtin": "9786263211193", "fields_translations": {"zh-hant": ["1"]}},
+                               {"gtin": "9786264154292", "fields_translations": {"zh-hant": ["2"]}},
+                               {"gtin": "9786263215313", "fields_translations": {"zh-hant": ["1~2"]}}]}
+        markup = "app.value('product', JSON.parse('" + json.dumps(json.dumps(data))[1:-1] + "'));"
+        result = series.kadokawa_variants(row, "https://www.kadokawa.com.tw/products/demo", markup)
+        self.assertEqual([(book.volume_label, book.source_key, book.release_date) for book in result],
+                         [("1", "9786263211193", None)])
+        row["media_type"] = "manga"
+        self.assertEqual(series.kadokawa_variants(row, "", markup), [])
+
     def test_menu_waits_for_manual_choice(self):
         with patch("builtins.input", return_value="Q"), patch.object(history_cli, "ensure_schema") as db, \
                 patch.object(history_cli, "run_history_session") as crawl:

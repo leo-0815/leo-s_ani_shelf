@@ -1,11 +1,12 @@
 """Bounded, operator-reviewed historical lookup; never part of cloud cron."""
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import quote, unquote, urljoin, urlsplit
 
 from .db import transaction
-from .models import extract_volume
+from .models import BookRecord, extract_volume
 from .series import series_key
 from .sources.common import fetch_html, parse_page, polite_pause
 from .sources.kadokawa import KadokawaSource
@@ -14,6 +15,8 @@ HOST = "www.kadokawa.com.tw"
 PAGES, DETAILS = 3, 25
 OFFICIAL = {"義妹生活": "https://" + HOST + "/categories/" + quote("義妹生活-全系列")}
 UNSAFE_EDITION = re.compile(r"套[書组組]|全套|合輯|畫集|設定集|全集|[0-9][)）]?\s*[~～〜至–—-]\s*[(（]?[0-9]", re.I)
+VARIANT_TITLE = re.compile(r"^(.+?)\s*系列\s*[【〖［（(]\s*(輕小說|小說|漫畫)\s*[】〗］）)]")
+SHOPLINE_PRODUCT = re.compile(r"""app\.value\('product',\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)""")
 
 
 def volume(value):
@@ -56,6 +59,43 @@ def valid_isbn(isbn):
             and sum(int(n) * (1 if i % 2 == 0 else 3) for i, n in enumerate(isbn)) % 10 == 0)
 
 
+def kadokawa_variants(row, link, markup):
+    """Read the publisher's own variant GTIN/volume pair, not recommendations or bundle metadata."""
+    match = SHOPLINE_PRODUCT.search(markup)
+    if not match:
+        raise ValueError("找不到角川商品規格")
+    data = json.loads(json.loads('"' + match[1].replace("\\'", "'") + '"'))
+    title = (data.get("title_translations") or {}).get("zh-hant", "")
+    match = VARIANT_TITLE.fullmatch(title.strip()) if isinstance(title, str) else None
+    if not match or UNSAFE_EDITION.search(title) or data.get("bundle_set") or data.get("child_products"):
+        return []
+    media = "manga" if match[2] == "漫畫" else "novel"
+    if media != row["media_type"] or series_key(match[1], "kadokawa") != row["series_key"]:
+        return []
+    rows, identities = [], {}
+    variations = data.get("variations") or []
+    if not isinstance(variations, list) or len(variations) > 100:
+        raise ValueError("角川商品規格數量異常")
+    for item in variations:
+        labels = (item.get("fields_translations") or {}).get("zh-hant") if isinstance(item, dict) else None
+        number = volume(labels[0]) if isinstance(labels, list) and len(labels) == 1 else None
+        isbn = str(item.get("gtin") or "").strip() if isinstance(item, dict) else ""
+        if not number or not valid_isbn(isbn):
+            continue
+        if isbn in identities:
+            if identities[isbn] != number:
+                raise ValueError("相同 ISBN 指向不同卷號")
+            continue
+        identities[isbn] = number
+        # ISBN is also Kadokawa's normal single-book URL key. Do not reuse parent
+        # publication date, rating, cover, or price for a variant.
+        rows.append(BookRecord(
+            "kadokawa", isbn, f"{match[1].strip()} ({number})", media, link,
+            series_title=match[1].strip(), volume_label=str(number), isbn=isbn,
+        ))
+    return rows
+
+
 def lookup(row, url, *, load=fetch_html):
     """Return evidence-backed candidates only; unresolved variants are never fabricated."""
     if row["code"] != "kadokawa":
@@ -75,16 +115,22 @@ def lookup(row, url, *, load=fetch_html):
                 product = official_url(urljoin(page_url, href), "products")
             except ValueError:
                 continue
-            if UNSAFE_EDITION.search(title) or not volume(extract_volume(title.split(" NT$")[0])):
+            label = title.split(" NT$")[0].removeprefix("會員獨享 ").strip()
+            multi = VARIANT_TITLE.fullmatch(label) is not None
+            if UNSAFE_EDITION.search(title) or (not multi and not volume(extract_volume(label))):
                 continue
-            links[product] = None
+            links[product] = multi
         if index + 1 not in source._page_numbers(page.links):
             break
     candidates = []
     for link in list(links)[:DETAILS]:
         try:
             polite_pause()
-            book = source._parse_detail(link, load(link, timeout=15, attempts=1))
+            markup = load(link, timeout=15, attempts=1)
+            if links[link]:
+                candidates.extend(kadokawa_variants(row, link, markup))
+                continue
+            book = source._parse_detail(link, markup)
         except (RuntimeError, ValueError, OSError):
             rejected.append(link)
             continue
