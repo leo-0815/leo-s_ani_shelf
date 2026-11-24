@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       test_publisher_only:
-        description: Update only one repaired publisher without notifications
+        description: Update one publisher or audit Tohan types (read-only), without notifications
         required: false
         default: none
         type: choice
@@ -15,6 +15,7 @@ on:
           - none
           - tohan
           - spp
+          - tohan_audit
       test_recent_recheck_only:
         description: Run bounded recent-window sweep/retries only, without notifications
         required: false
@@ -100,6 +101,9 @@ jobs:
         env:
           ANISHELF_PUBLISHER: ${{ inputs.test_publisher_only }}
         run: python -m app.publisher_check "$ANISHELF_PUBLISHER"
+      - name: Audit legacy Tohan classifications without writes or notifications
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_publisher_only == 'tohan_audit' }}
+        run: python -m app.tohan_scope_audit --limit 20
       - name: Test recent-window safety sweep without notifications
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_recent_recheck_only == true }}
         run: python -m app.recent_recheck

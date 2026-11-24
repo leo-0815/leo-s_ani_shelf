@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 from .db import transaction
 from .models import BookRecord
 from .sources.common import fetch_html, one_year_cutoff, parse_page, polite_pause
+from .sources.tohan_public import LOGIN_ERROR, PURE_EXCLUSION
 
 INTERVAL_DAYS = 4
 PAGES = 15
@@ -23,6 +24,15 @@ SPP_ITEMS = 200  # Sitemap equivalent; never interpret this as 15 HTML pages.
 DAILY_PRODUCTS = 5  # Per publisher, shared across repeated/manual invocations.
 SOURCE_SECONDS = 240
 SOURCES = ("tohan", "chingwin", "kadokawa", "tongli", "spp")
+
+TOHAN_EXCLUSIONS = frozenset({LOGIN_ERROR, PURE_EXCLUSION})
+# Static, application-owned literals used by both SQL candidate builders.
+EXCLUDED_REASONS_SQL = "('" + LOGIN_ERROR + "','" + PURE_EXCLUSION + "')"
+
+
+def active_retry_sql(code: str) -> str:
+    return (f" AND COALESCE(last_error,'') NOT IN {EXCLUDED_REASONS_SQL}"
+            if code == "tohan" else "")
 
 
 def canonical_product(code: str, url: str) -> str | None:
@@ -82,12 +92,19 @@ def enqueue(code: str, urls: list[tuple[str, str | None, dict | None]], *, error
                      now + timedelta(days=1) if error else now))
                 count += max(cursor.rowcount, 0)
                 if error:
+                    if code == "tohan" and error in TOHAN_EXCLUSIONS:
+                        cursor.execute(
+                            "UPDATE catalog_product_retries SET last_error=%s,status='ignored' "
+                            "WHERE publisher_code=%s AND url_hash=%s AND "
+                            "(status<>'ignored' OR COALESCE(last_error,'')<>%s)",
+                            (error, code, digest, error))
+                        continue
                     # A fresh daily failure can reopen a previously successful URL;
                     # an existing pending retry retains its backoff, never gets reset.
                     cursor.execute(
                         "UPDATE catalog_product_retries SET last_error=%s, "
                         "next_attempt_at=CASE WHEN status='done' THEN %s ELSE next_attempt_at END, "
-                        "status='pending' WHERE publisher_code=%s AND url_hash=%s",
+                        "status='pending' WHERE publisher_code=%s AND url_hash=%s" + active_retry_sql(code),
                         (error[:1000], now + timedelta(days=1), code, digest))
     return count
 
@@ -99,7 +116,33 @@ def attach_failure_recorder(source) -> None:
         enqueue(source.code, [(url, hint or getattr(seed, "media_type", None), asdict(seed) if seed else None)], error=error)
     source.record_product_failure = record
     if source.code == "tohan":
+        source.known_excluded_keys = tohan_excluded_keys
+        source.record_pure_exclusions = record_pure_exclusions
         source.should_fetch_product = lambda url: product_retry_due(source.code, url)
+        # Attachment happens outside the per-source error boundary. Defer DB
+        # reads until collect(), so a transient TiDB error cannot abort all sources.
+        source.listing_upgrade_keys = tohan_unknown_keys
+
+
+def record_pure_exclusions(urls: list[str]) -> None:
+    enqueue("tohan", [(url, None, None) for url in urls], error=PURE_EXCLUSION)
+
+
+def tohan_excluded_keys() -> set[str]:
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT source_url FROM catalog_product_retries WHERE publisher_code='tohan' "
+                           f"AND last_error IN {EXCLUDED_REASONS_SQL}")
+            rows = cursor.fetchall()
+    return {row["source_url"].rsplit("=", 1)[-1] for row in rows}
+
+
+def tohan_unknown_keys() -> set[str]:
+    with transaction() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT b.source_key FROM books b JOIN publishers p ON p.id=b.publisher_id "
+                           "WHERE p.code='tohan' AND b.media_type='unknown'")
+            return {row['source_key'] for row in cursor.fetchall()}
 
 
 def product_retry_due(code: str, url: str, now: datetime | None = None) -> bool:
@@ -109,10 +152,13 @@ def product_retry_due(code: str, url: str, now: datetime | None = None) -> bool:
         return False
     with transaction() as connection:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT next_attempt_at FROM catalog_product_retries "
-                           "WHERE publisher_code=%s AND url_hash=%s AND status='pending'",
+            cursor.execute("SELECT next_attempt_at,last_error FROM catalog_product_retries "
+                           "WHERE publisher_code=%s AND url_hash=%s AND "
+                           f"(status='pending' OR (publisher_code='tohan' AND last_error IN {EXCLUDED_REASONS_SQL}))",
                            (code, hashlib.sha256(canonical.encode()).hexdigest()))
             row = cursor.fetchone()
+    if row and code == "tohan" and row["last_error"] in TOHAN_EXCLUSIONS:
+        return False
     next_at = row["next_attempt_at"] if row else None
     if isinstance(next_at, str):
         next_at = datetime.fromisoformat(next_at)
@@ -122,9 +168,10 @@ def product_retry_due(code: str, url: str, now: datetime | None = None) -> bool:
 def tohan_retry_filter(code: str) -> str:
     # Exact canonical identity; tracking/category query strings do not split backoff.
     return (" AND NOT EXISTS (SELECT 1 FROM catalog_product_retries pr "
-            "WHERE pr.publisher_code='tohan' AND pr.status='pending' "
+            "WHERE pr.publisher_code='tohan' "
             "AND pr.url_hash=SHA2(CONCAT('https://www.tohan.com.tw/product.php?act=view&id=',b.source_key),256) "
-            "AND pr.next_attempt_at>UTC_TIMESTAMP())") if code == "tohan" else ""
+            f"AND (pr.last_error IN {EXCLUDED_REASONS_SQL} OR "
+            "(pr.status='pending' AND pr.next_attempt_at>UTC_TIMESTAMP())))") if code == "tohan" else ""
 
 
 def acknowledge_saved(source, record: BookRecord) -> None:
@@ -227,33 +274,36 @@ def scan_recent(source, *, deadline: float, progress: dict | None = None) -> dic
                 if not urls:
                     break
     elif code == "tohan":
-        pending = [source.list_url]
+        from .sources.tohan_public import public_seeds
+        attach_failure_recorder(source)
+        excluded = source.excluded_keys(save)
+        pending = [(hint, url) for hint, url in source.category_urls]
         seen = set()
-        while pending and len(seen) < PAGES:
-            url = pending.pop(0)
+        while pending and result["pages"] < PAGES:
+            hint, url = pending.pop(0)
             if url in seen:
                 continue
             seen.add(url)
-            listing = parse_page(save(url))
-            products = [urljoin(url, href) for href, _ in listing.links if canonical_product(code, urljoin(url, href))]
-            if len(seen) == 1 and not products:
+            markup = save(url)
+            cards = public_seeds(url, markup, hint)
+            if not cards:
                 raise ValueError("東販近期清單未辨識到商品，不標記複查完成")
-            put([(u, None, None) for u in products])
+            put([(r.source_url, hint, asdict(r)) for key, r in cards.items() if key not in excluded])
             # Follow actual same-category pagination, never guess a catalog URL.
-            for href, _ in listing.links:
+            for href, _ in parse_page(markup).links:
                 target = urlsplit(urljoin(url, href))
                 query = parse_qs(target.query)
                 if (target.scheme in {"http", "https"} and target.netloc == "www.tohan.com.tw"
-                        and target.path == "/product.php" and query.get("cid") == ["107"]
+                        and target.path == "/product.php" and query.get("cid") == parse_qs(urlsplit(url).query).get('cid')
                         and "page" in query and query.get("act", ["list"]) == ["list"]):
                     try:
                         page = int(query["page"][0])
                     except ValueError:
                         continue
                     if 2 <= page <= PAGES:
-                        page_url = "https://www.tohan.com.tw/product.php?" + urlencode({"act": "list", "cid": "107", "page": page})
-                        if page_url not in seen and page_url not in pending:
-                            pending.append(page_url)
+                        page_url = "https://www.tohan.com.tw/product.php?" + urlencode({"act": "list", "cid": query['cid'][0], "page": page})
+                        if page_url not in seen and (hint, page_url) not in pending:
+                            pending.append((hint, page_url))
     elif code == "spp":
         if time.monotonic() >= deadline:
             raise TimeoutError("近期複查時間不足")
@@ -276,7 +326,8 @@ def claim_product(code: str, now: datetime) -> dict | None:
             if used >= DAILY_PRODUCTS:
                 return None
             cursor.execute("SELECT * FROM catalog_product_retries WHERE publisher_code=%s AND status='pending' "
-                           "AND next_attempt_at<=%s ORDER BY next_attempt_at,first_seen_at,url_hash LIMIT 1 FOR UPDATE", (code, now))
+                           + active_retry_sql(code) +
+                           " AND next_attempt_at<=%s ORDER BY next_attempt_at,first_seen_at,url_hash LIMIT 1 FOR UPDATE", (code, now))
             row = cursor.fetchone()
             if not row:
                 return None
@@ -289,13 +340,13 @@ def claim_product(code: str, now: datetime) -> dict | None:
 
 
 def finish_product(row: dict, *, error: str | None = None, ignored: bool = False) -> None:
-    from .sources.tohan_public import LOGIN_ERROR
-    days = 7 if error == LOGIN_ERROR else min(2 ** min(row["attempts"] - 1, 3), 7)
+    days = min(2 ** min(row["attempts"] - 1, 3), 7)
+    excluded = row["publisher_code"] == "tohan" and error in TOHAN_EXCLUSIONS
     with transaction() as connection:
         with connection.cursor() as cursor:
             cursor.execute("UPDATE catalog_product_retries SET status=%s,last_error=%s,next_attempt_at=%s "
                            "WHERE publisher_code=%s AND url_hash=%s",
-                           ("pending" if error else "ignored" if ignored else "done", error[:1000] if error else None,
+                           ("ignored" if excluded or ignored else "pending" if error else "done", error[:1000] if error else None,
                             datetime.utcnow() + timedelta(days=days),
                             row["publisher_code"], row["url_hash"]))
 
@@ -332,9 +383,17 @@ def fetch_product(source, row: dict) -> BookRecord | None:
         record = source._parse_detail(url, markup, media_hint=row["media_hint"])
     elif code == "spp":
         record, _ = source._parse_detail(url, markup, enforce_cutoff=False)
+    elif code == 'tohan':
+        from .sources.tohan_public import UnsupportedTohanProduct, ExcludedTohanPure
+        try:
+            record = source._parse_detail(url, markup, media_hint=row['media_hint'], strict_hint=False)
+        except ExcludedTohanPure:
+            raise
+        except UnsupportedTohanProduct:
+            return None
     else:
         record = source._parse_detail(url, markup)
-    return record if record and record.media_type in {"manga", "novel"} else None
+    return record if record and record.media_type in ({"manga", "novel", "unknown"} if code == 'tohan' else {"manga", "novel"}) else None
 
 
 def backlog(code: str, now: datetime | None = None) -> dict:
@@ -343,7 +402,8 @@ def backlog(code: str, now: datetime | None = None) -> dict:
         with connection.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) AS pending,MIN(first_seen_at) AS oldest,"
                            "SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS failed "
-                           "FROM catalog_product_retries WHERE publisher_code=%s AND status='pending'", (code,))
+                           "FROM catalog_product_retries WHERE publisher_code=%s AND status='pending'"
+                           + active_retry_sql(code), (code,))
             row = cursor.fetchone()
     oldest = row["oldest"]
     if isinstance(oldest, str):
@@ -378,7 +438,10 @@ def run_recent_rechecks(*, scan: bool = True) -> dict:
                     finish_product(row, ignored=record is None)
                 except Exception as exc:
                     finish_product(row, error=str(exc))
-                    result["errors"].append(str(exc)[:1000])
+                    if code == "tohan" and str(exc) in TOHAN_EXCLUSIONS:
+                        result["ignored"] += 1
+                    else:
+                        result["errors"].append(str(exc)[:1000])
 
         # Existing retries get priority: a slow listing scan cannot starve them.
         drain()

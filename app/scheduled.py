@@ -52,7 +52,7 @@ def main() -> None:
     status_job = dict(job)
     if recent_result.get("error") or recent_warnings:
         status_job["status"] = "failed" if job.get("status") == "failed" else "partial"
-        status_job["message"] = "近期防漏複查需注意：" + (str(recent_result.get("error")) or "、".join(recent_warnings)) + "\n" + str(job.get("message") or "")
+        status_job["message"] = "近期防漏複查需注意：" + (str(recent_result.get("error") or "") or "、".join(recent_warnings)) + "\n" + str(job.get("message") or "")
     status_event = crawl_status_event(status_job)
     extra_events = [event for event in (status_event,) if event]
     if email_failure:

@@ -160,7 +160,8 @@ def upsert_book(record: BookRecord, *, change_origin: str = "crawler") -> str:
             write_data = (
                 _sync_write_data(existing, data)
                 if change_origin in {"cloud_pull", "sync_upload"}
-                else _crawler_write_data(existing, data)
+                else _crawler_write_data(existing, data, listing_only=_tohan_listing_record(record),
+                                         preserve_tohan_type=record.publisher_code == 'tohan')
             )
             if record.publisher_code == "chingwin" and not migrate_source_key:
                 write_data["source_key"] = existing["source_key"]
@@ -236,15 +237,42 @@ def _apply_series_alias_to_data(
         data["series_key"] = alias["canonical_key"]
 
 
-def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+def _tohan_listing_record(record: BookRecord) -> bool:
+    from .sources.tohan_public import ListingRecord
+    return isinstance(record, ListingRecord)
+
+
+def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any], *, listing_only: bool = False,
+                        preserve_tohan_type: bool = False) -> dict[str, Any]:
     """Keep an administrator's rating while still accepting fresh publisher metadata."""
     result = dict(data)
     # Tohan public cards contain no authoritative type/author/ISBN/date/rating.
-    # Only fill a missing cover; a later detail record upgrades the same source ID.
-    if data.get("publisher_code") == "tohan" and data.get("media_type") == "unknown":
+    # Fill a missing cover/type only; a later detail upgrades the same source ID.
+    sparse_tohan = (data.get('media_type') == 'unknown' and not data.get('isbn')
+                    and not data.get('author') and not data.get('release_checked_at')
+                    and not data.get('rating_checked_at'))
+    if data.get("publisher_code") == "tohan" and (listing_only or sparse_tohan):
         for field in BOOK_FIELDS:
+            if (field == 'media_type' and listing_only and existing.get(field) == 'unknown'
+                    and data.get(field) in {'manga','novel'}):
+                continue
             if field != "cover_url" or existing.get(field):
                 result[field] = existing.get(field)
+        result['normalized_title'] = normalize_text(result.get('title') or '').casefold()
+    elif data.get('publisher_code') == 'tohan':
+        # A real, readable product can enrich a typed listing seed even when its
+        # own monthly category does not distinguish manga from light novels.
+        if result.get('media_type') == 'unknown' and existing.get('media_type') in {'manga','novel'}:
+            result['media_type'] = existing['media_type']
+        for field in ('author','isbn','cover_url','list_price'):
+            if result.get(field) in {None, ''} and existing.get(field) not in {None, ''}:
+                result[field] = existing[field]
+    if (preserve_tohan_type and data.get('publisher_code') == 'tohan'
+            and existing.get('media_type') in {'manga','novel'}
+            and result.get('media_type') in {'manga','novel'}):
+        # Legacy misclassification needs a reviewed migration of series follows,
+        # not a silent category move during an unrelated date/detail refresh.
+        result['media_type'] = existing['media_type']
     if data.get("publisher_code") == "chingwin":
         from .book_identity import merge_chingwin_metadata
         result = merge_chingwin_metadata(existing, result)

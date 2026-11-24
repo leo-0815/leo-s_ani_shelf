@@ -164,10 +164,14 @@ class RecentDiscoveryTests(unittest.TestCase):
         self.assertTrue(any("page=15" in url for url in self.urls))
 
     def test_tohan_follows_official_act_list_links_not_catalog_or_other_hosts(self):
-        markup = '<a href="/product.php?act=view&id=A1">書</a>' + ''.join(
+        markup = '<div class="tab-pane active gobal-warp"><a href="/product.php?act=view&id=123"><img src="/data/goods/cover.jpg"><p class="g-bookName">書</p></a></div>' + ''.join(
             f'<a href="/product.php?act=list&cid=107&page={i}">{i}</a>' for i in range(1, 18)) + \
             '<a href="https://evil.test/product.php?cid=107&page=2">2</a>'
-        result = self.scan(TohanSource(), markup)
+        source = TohanSource()
+        source.pure_index_url = None
+        source.category_urls = ((None, source.list_url),)
+        with patch.object(recent, 'tohan_excluded_keys', return_value=set()):
+            result = self.scan(source, markup)
         self.assertEqual(result["pages"], 15)
         self.assertEqual(len(set(self.urls)), 15)
         self.assertFalse(any("page=16" in u or "evil" in u or "cid=1&" in u for u in self.urls))
