@@ -52,6 +52,11 @@ def refresh_recent_ratings(*, limit: int = DAILY_LIMIT, minutes: float = 10) -> 
                 grade, raw, error, changed = check_book(row)
                 progressed = True
                 counts["checked"] += 1
+                if code == "tohan" and error:
+                    from .recent_recheck import TOHAN_EXCLUSIONS
+                    if error in TOHAN_EXCLUSIONS:
+                        counts["excluded"] = counts.get("excluded", 0) + 1
+                        continue
                 counts["updated"] += bool(changed)
                 counts["confirmed" if grade != "unknown" else "unknown"] += 1
                 if error:

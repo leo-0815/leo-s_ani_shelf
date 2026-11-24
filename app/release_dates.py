@@ -253,11 +253,14 @@ def refresh_source(source: Any, limit: int = DEFAULT_LIMIT) -> dict:
             record_attempt(row["id"], now, now + timedelta(days=1), str(exc))
         except Exception as exc:
             message = f"{row['source_key']}: {exc}"
-            stats["errors"].append(message)
             # Failed requests retain old metadata and retry no sooner than tomorrow.
             record_attempt(row["id"], now, now + timedelta(days=1), message)
             if source.code == "tohan":
-                from .sources.common import product_failure
-                product_failure(source, row["source_url"], exc)
+                from .recent_recheck import enqueue, TOHAN_EXCLUSIONS
+                enqueue("tohan", [(row["source_url"], row.get("media_type"), None)], error=str(exc))
+                if str(exc) in TOHAN_EXCLUSIONS:
+                    stats["excluded"] = stats.get("excluded", 0) + 1
+                    continue
+            stats["errors"].append(message)
     return stats
 

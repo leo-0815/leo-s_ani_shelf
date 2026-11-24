@@ -15,7 +15,7 @@ class SourceParserTests(unittest.TestCase):
     def test_tohan_detail_uses_document_title_when_og_title_is_generic(self) -> None:
         markup = """
         <html><head>
-          <title>邂逅命定之人 1 首刷限定版_PURE系列_漫畫 | 台灣東販</title>
+          <title>邂逅命定之人 1 首刷限定版_分類漫畫_漫畫 | 台灣東販</title>
           <meta property="og:title" content="書名">
           <meta property="og:image" content="https://example.test/cover.jpg">
         </head><body>
@@ -27,7 +27,7 @@ class SourceParserTests(unittest.TestCase):
         </body></html>
         """
         record = TohanSource()._parse_detail(
-            "https://www.tohan.com.tw/product.php?act=view&cid=2&id=8481", markup
+            "https://www.tohan.com.tw/product.php?act=view&cid=3&id=8481", markup
         )
         self.assertEqual(record.title, "邂逅命定之人 1 首刷限定版")
         self.assertEqual(record.author, "あなしん")

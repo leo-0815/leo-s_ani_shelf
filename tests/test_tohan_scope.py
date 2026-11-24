@@ -98,6 +98,7 @@ class TohanScopeTests(unittest.TestCase):
     @patch('app.sources.tohan.fetch_html')
     def test_collect_ignores_all_link_recommendation_and_deduplicates_typed_lists(self, fetch, pause):
         source=TohanSource()
+        source.pure_index_url = None
         source.category_urls=((None,LIST),('manga','https://www.tohan.com.tw/product.php?cid=3'))
         fetch.side_effect=[CARD+'<a href="/product.php?act=view&id=8752">一般書</a>',CARD,title()+'<p>作者</p><p>作者一</p><p>ISBN</p><p>9781234567890</p>']
         rows=source.collect()
@@ -110,6 +111,7 @@ class TohanScopeTests(unittest.TestCase):
     @patch('app.sources.tohan.fetch_html',return_value=CARD)
     def test_existing_unknown_seed_upgrades_without_new_product_request(self, fetch, pause):
         source=TohanSource();source.category_urls=(('novel',LIST),)
+        source.pure_index_url = None
         source.listing_upgrade_keys={'8768'}
         rows=source.collect(known_keys={'8768'})
         self.assertEqual(rows[0].media_type,'novel')

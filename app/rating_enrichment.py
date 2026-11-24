@@ -133,8 +133,9 @@ def check_book(row: dict, *, dry_run: bool = False) -> tuple[str, str | None, st
             raise ValueError("No edition-specific official product URL; kept unknown")
         markup = fetch_html(url, timeout=20, attempts=2)
         if code == "tohan":
-            from .sources.tohan_public import require_public_product
+            from .sources.tohan_public import require_public_product, reject_pure_product
             require_public_product(markup)
+            reject_pure_product(markup)
         rating, raw = parse_rating(code, url, markup,
                                    row["source_key"], row.get("isbn"))
         bl_category = parse_bl_category(code, url, markup, row["source_key"])

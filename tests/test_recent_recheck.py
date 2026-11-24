@@ -168,8 +168,10 @@ class RecentDiscoveryTests(unittest.TestCase):
             f'<a href="/product.php?act=list&cid=107&page={i}">{i}</a>' for i in range(1, 18)) + \
             '<a href="https://evil.test/product.php?cid=107&page=2">2</a>'
         source = TohanSource()
+        source.pure_index_url = None
         source.category_urls = ((None, source.list_url),)
-        result = self.scan(source, markup)
+        with patch.object(recent, 'tohan_excluded_keys', return_value=set()):
+            result = self.scan(source, markup)
         self.assertEqual(result["pages"], 15)
         self.assertEqual(len(set(self.urls)), 15)
         self.assertFalse(any("page=16" in u or "evil" in u or "cid=1&" in u for u in self.urls))

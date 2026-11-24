@@ -7,7 +7,9 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
 from .common import fetch_html, parse_page, polite_pause, unique
-from .tohan_public import public_seeds, require_public_product, detail_media_type, UnsupportedTohanProduct
+from .tohan_public import (public_seeds, require_public_product, detail_media_type,
+                           UnsupportedTohanProduct, ExcludedTohanPure, SourceLoginRequired,
+                           PURE_EXCLUSION, reject_pure_product)
 
 
 class TohanSource:
@@ -16,12 +18,12 @@ class TohanSource:
     list_url = "https://www.tohan.com.tw/product.php?cid=107"
     catalog_url = "https://www.tohan.com.tw/product.php?cid=1"
     max_items = 30
+    pure_index_url = "https://www.tohan.com.tw/product.php?cid=2"
     category_urls = (
         (None, "https://www.tohan.com.tw/product.php?cid=107"),
         ("manga", "https://www.tohan.com.tw/product.php?cid=3"),
         ("novel", "https://www.tohan.com.tw/product.php?cid=139"),
         ("novel", "https://www.tohan.com.tw/product.php?cid=17"),
-        (None, "https://www.tohan.com.tw/product.php?cid=2"),
         (None, "https://www.tohan.com.tw/product.php?cid=172"),
     )
     latest_cursor: str | None = None
@@ -30,6 +32,20 @@ class TohanSource:
         self.errors: list[str] = []
         self.skipped_count = 0
 
+    def excluded_keys(self, load) -> set[str]:
+        """Read the current PURE index only as a denylist, never as a feed."""
+        if self.pure_index_url:
+            cards = public_seeds(self.pure_index_url, load(self.pure_index_url))
+            if not cards:
+                raise ValueError("東販 PURE 排除清單無法辨識")
+            recorder = getattr(self, "record_pure_exclusions", None)
+            if recorder:
+                recorder([card.source_url for card in cards.values()])
+        else:
+            cards = {}
+        known_exclusions = getattr(self, "known_excluded_keys", lambda: set())
+        return set(cards) | known_exclusions()
+
     def collect(
         self,
         known_keys: set[str] | None = None,
@@ -37,6 +53,7 @@ class TohanSource:
         backfill: bool = False,
     ) -> list[BookRecord]:
         known_keys = known_keys or set()
+        excluded = self.excluded_keys(fetch_html)
         seeds = {}
         conflicting = set()
         for hint, base in self.category_urls:
@@ -53,6 +70,9 @@ class TohanSource:
                     if not cards:
                         raise ValueError("東販主要商品區沒有可辨識的商品卡片")
                     for key, seed in cards.items():
+                        if key in excluded:
+                            self.skipped_count += 1
+                            continue
                         old = seeds.get(key)
                         if old and old.media_type != 'unknown' and seed.media_type != 'unknown' and old.media_type != seed.media_type:
                             conflicting.add(key)
@@ -89,6 +109,10 @@ class TohanSource:
                 records.append(self._parse_detail(url, fetch_html(url), media_hint=seed.media_type))
                 from .common import product_success
                 product_success(self, url)
+            except (SourceLoginRequired, ExcludedTohanPure) as exc:
+                from .common import product_failure
+                product_failure(self, url, exc)
+                self.skipped_count += 1
             except UnsupportedTohanProduct:
                 self.skipped_count += 1
             except Exception as exc:
@@ -97,7 +121,7 @@ class TohanSource:
                 product_failure(self, url, exc, seed=seed)
                 if seed:
                     records.append(seed)
-        if not records and not known_keys:
+        if not records and not known_keys and not self.skipped_count:
             raise RuntimeError("台灣東販商品清單沒有解析到有效書目")
         return records
 
@@ -118,6 +142,7 @@ class TohanSource:
 
     def _parse_detail(self, url: str, markup: str, media_hint: str | None = None, *, strict_hint: bool = True) -> BookRecord:
         require_public_product(markup)
+        reject_pure_product(markup)
         page = parse_page(markup)
         first_line = page.text.splitlines()[0] if page.text.splitlines() else ""
         title = page.meta.get("og:title", "").split("_")[0].strip()

@@ -16,6 +16,14 @@ class UnsupportedTohanProduct(ValueError):
     """An explicit official category outside manga/light novels, not a parse error."""
 
 
+class ExcludedTohanPure(UnsupportedTohanProduct):
+    pass
+
+
+PURE_EXCLUSION = "東販官方 PURE 書系不收錄"
+PURE_CATEGORIES = {"PURE", "PURE系列", "限定版/特裝版(PURE)"}
+
+
 @dataclass(frozen=True)
 class ListingRecord(BookRecord):
     """In-process provenance: listing metadata must never erase product fields."""
@@ -28,14 +36,27 @@ MANGA_CATEGORIES = frozenset({
 })
 
 
-def detail_media_type(markup: str, hint: str | None = None, *, strict_hint: bool = True) -> str:
-    """Read this product's document-title taxonomy, never global navigation/title keywords."""
+def product_categories(markup: str) -> tuple[str, str] | None:
     match = re.search(r"<title\b[^>]*>(.*?)</title>", markup, re.S | re.I)
     text = unescape(re.sub(r"<[^>]+>", "", match[1])) if match else ""
     taxonomy = text.rsplit("|", 1)[0].rsplit("_", 2)
-    own = "unknown"
     if len(taxonomy) == 3:
-        child, parent = (re.sub(r"\s+", "", x) for x in taxonomy[-2:])
+        return tuple(re.sub(r"\s+", "", x) for x in taxonomy[-2:])
+    return None
+
+
+def reject_pure_product(markup: str) -> None:
+    if PURE_CATEGORIES.intersection(product_categories(markup) or ()):
+        raise ExcludedTohanPure(PURE_EXCLUSION)
+
+
+def detail_media_type(markup: str, hint: str | None = None, *, strict_hint: bool = True) -> str:
+    """Read this product's document-title taxonomy, never global navigation/title keywords."""
+    reject_pure_product(markup)
+    own = "unknown"
+    categories = product_categories(markup)
+    if categories:
+        child, parent = categories
         if parent not in {"漫畫", "漫畫/輕小說"}:
             raise UnsupportedTohanProduct(f"非漫畫／輕小說商品：{parent[:60]}")
         if child in {"華文輕小說", "翻譯輕小說"}:
