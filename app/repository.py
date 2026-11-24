@@ -246,7 +246,10 @@ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any], *, listi
     result = dict(data)
     # Tohan public cards contain no authoritative type/author/ISBN/date/rating.
     # Fill a missing cover/type only; a later detail upgrades the same source ID.
-    if data.get("publisher_code") == "tohan" and (listing_only or data.get("media_type") == "unknown"):
+    sparse_tohan = (data.get('media_type') == 'unknown' and not data.get('isbn')
+                    and not data.get('author') and not data.get('release_checked_at')
+                    and not data.get('rating_checked_at'))
+    if data.get("publisher_code") == "tohan" and (listing_only or sparse_tohan):
         for field in BOOK_FIELDS:
             if (field == 'media_type' and listing_only and existing.get(field) == 'unknown'
                     and data.get(field) in {'manga','novel'}):
@@ -254,6 +257,14 @@ def _crawler_write_data(existing: dict[str, Any], data: dict[str, Any], *, listi
             if field != "cover_url" or existing.get(field):
                 result[field] = existing.get(field)
         result['normalized_title'] = normalize_text(result.get('title') or '').casefold()
+    elif data.get('publisher_code') == 'tohan':
+        # A real, readable product can enrich a typed listing seed even when its
+        # own monthly category does not distinguish manga from light novels.
+        if result.get('media_type') == 'unknown' and existing.get('media_type') in {'manga','novel'}:
+            result['media_type'] = existing['media_type']
+        for field in ('author','isbn','cover_url','list_price'):
+            if result.get(field) in {None, ''} and existing.get(field) not in {None, ''}:
+                result[field] = existing[field]
     if data.get("publisher_code") == "chingwin":
         from .book_identity import merge_chingwin_metadata
         result = merge_chingwin_metadata(existing, result)

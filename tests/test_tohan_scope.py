@@ -78,6 +78,16 @@ class TohanScopeTests(unittest.TestCase):
         seed = public_seeds(LIST,CARD,'manga')['8768'].prepared()
         self.assertEqual(book_content_hash(_crawler_write_data(old,seed,listing_only=True)),book_content_hash(old))
 
+    def test_readable_ambiguous_product_enriches_seed_without_losing_listing_type(self):
+        old=public_seeds(LIST,CARD,'manga')['8768'].prepared()
+        detail=BookRecord('tohan','8768','正式商品書名','unknown',URL,author='正式作者',
+                          isbn='9781234567890',list_price=150).prepared()
+        merged=_crawler_write_data(old,detail)
+        self.assertEqual(merged['media_type'],'manga')
+        self.assertEqual(merged['author'],'正式作者')
+        self.assertEqual(merged['isbn'],'9781234567890')
+        self.assertEqual(merged['title'],'正式商品書名')
+
     @patch('app.sources.tohan.polite_pause')
     @patch('app.sources.tohan.fetch_html')
     def test_collect_ignores_all_link_recommendation_and_deduplicates_typed_lists(self, fetch, pause):
