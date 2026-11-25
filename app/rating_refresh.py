@@ -25,9 +25,13 @@ def claim_daily_budget(now: datetime, limit: int = DAILY_LIMIT) -> bool:
             return cursor.rowcount == 1
 
 
-def refresh_recent_ratings(*, limit: int = DAILY_LIMIT, minutes: float = 10) -> dict:
+def refresh_recent_ratings(*, limit: int = DAILY_LIMIT, minutes: float = 10,
+                           skip_sources: set[str] | None = None) -> dict:
     limit = min(max(int(limit), 0), DAILY_LIMIT)
     counts = dict(checked=0, updated=0, confirmed=0, unknown=0, errors=[], daily_limit=DAILY_LIMIT)
+    skip_sources = skip_sources or set()
+    if skip_sources:
+        counts["skipped_sources"] = sorted(skip_sources)
     if not limit or minutes <= 0:
         return counts
     with transaction() as connection:
@@ -38,6 +42,8 @@ def refresh_recent_ratings(*, limit: int = DAILY_LIMIT, minutes: float = 10) -> 
     while counts["checked"] < limit:
         progressed = False
         for code in PARSER_VERSIONS:
+            if code in skip_sources:
+                continue
             if time.monotonic() >= deadline:
                 return counts
             # 90-day recent arrivals / releases, not a full historical crawl.

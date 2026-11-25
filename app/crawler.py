@@ -106,7 +106,7 @@ def run_incremental(source_code: str = "all") -> int:
     return job_id
 
 
-def run_incremental_sources(source_codes: Iterable[str]) -> int:
+def run_incremental_sources(source_codes: Iterable[str], *, blocked_sources: set[str] | None = None) -> int:
     """Run one foreground job for an explicit group of scheduled sources."""
     codes = tuple(dict.fromkeys(str(code).strip() for code in source_codes if str(code).strip()))
     if not codes or any(code not in SOURCES for code in codes):
@@ -118,7 +118,7 @@ def run_incremental_sources(source_codes: Iterable[str]) -> int:
                 ("scheduled",),
             )
             job_id = int(cursor.lastrowid)
-    _run_job(job_id, "scheduled", "incremental", codes)
+    _run_job(job_id, "scheduled", "incremental", codes, blocked_sources=blocked_sources)
     return job_id
 
 
@@ -127,6 +127,8 @@ def _run_job(
     source_code: str,
     mode: str = "incremental",
     source_codes: Iterable[str] | None = None,
+    *,
+    blocked_sources: set[str] | None = None,
 ) -> None:
     if not _job_lock.acquire(blocking=False):
         _finish_job(job_id, "failed", message="已有另一個更新工作正在執行")
@@ -218,12 +220,15 @@ def _run_job(
             except Exception as exc:
                 totals["errors"] += 1
                 message = f"{source.name}：{exc}"
+                if blocked_sources is not None and code == "chingwin" and _chingwin_landing_forbidden(exc):
+                    blocked_sources.add(code)
+                    message += "；本輪略過青文日期、分級與防漏複查"
                 messages.append(message)
                 _mark_source(code, message)
                 if mode == "backfill":
                     print(f"大型回填：{message}", flush=True)
             finally:
-                if mode == "incremental":
+                if mode == "incremental" and code not in (blocked_sources or ()):
                     _refresh_known_releases(source, totals, messages)
         status = "completed" if totals["errors"] == 0 else "partial"
         _finish_job(job_id, status, totals, "\n".join(messages[-10:]))
@@ -231,6 +236,18 @@ def _run_job(
         _finish_job(job_id, "failed", totals, f"{exc}\n{traceback.format_exc(limit=3)}")
     finally:
         _job_lock.release()
+
+
+def _chingwin_landing_forbidden(exc: Exception) -> bool:
+    from urllib.error import HTTPError
+    from urllib.parse import urlsplit
+
+    original = exc if isinstance(exc, HTTPError) else exc.__cause__
+    if not isinstance(original, HTTPError) or original.code != 403:
+        return False
+    url = urlsplit(original.geturl())
+    return (url.scheme == "https" and url.hostname == "www.ching-win.com.tw"
+            and url.path.rstrip("/") == "/about-news")
 
 
 def _refresh_known_releases(source: Any, totals: dict[str, int], messages: list[str]) -> None:

@@ -24,15 +24,18 @@ def main() -> None:
     settings = get_settings()
     ensure_schema()
     started_at = datetime.utcnow() - timedelta(minutes=1)
-    job_id = run_incremental_sources(SCHEDULED_SOURCES)
+    blocked_sources: set[str] = set()
+    job_id = run_incremental_sources(SCHEDULED_SOURCES, blocked_sources=blocked_sources)
     job = get_job(job_id) or {"id": job_id, "status": "failed", "message": "找不到更新結果"}
     try:
-        rating_result = refresh_recent_ratings()
+        rating_result = (refresh_recent_ratings(skip_sources=blocked_sources)
+                         if blocked_sources else refresh_recent_ratings())
     except Exception as exc:
         # Preserve notifications if the independent grading pass fails.
         rating_result = {"error": str(exc)}
     try:
-        recent_result = run_recent_rechecks()
+        recent_result = (run_recent_rechecks(skip_sources=blocked_sources)
+                         if blocked_sources else run_recent_rechecks())
     except Exception as exc:
         recent_result = {"error": str(exc)}
     email_failure = None
@@ -47,12 +50,15 @@ def main() -> None:
     except NotificationError as exc:
         email_failure = str(exc)
         email_result = {"enabled": True, "error": email_failure}
-    recent_warnings = [code for code, result in recent_result.items()
-                       if isinstance(result, dict) and result.get("warning")]
+    recent_failures = [code for code, result in recent_result.items()
+                       if isinstance(result, dict) and (result.get("errors") or result.get("scan") == "partial")]
     status_job = dict(job)
-    if recent_result.get("error") or recent_warnings:
+    if recent_result.get("error") or recent_failures:
         status_job["status"] = "failed" if job.get("status") == "failed" else "partial"
-        status_job["message"] = "近期防漏複查需注意：" + (str(recent_result.get("error") or "") or "、".join(recent_warnings)) + "\n" + str(job.get("message") or "")
+        status_job["message"] = "近期防漏複查失敗：" + (str(recent_result.get("error") or "") or "、".join(recent_failures)) + "\n" + str(job.get("message") or "")
+    if "chingwin" in blocked_sources:
+        status_job["message"] = ("青文官網 HTTP 403，青文本輪未更新；已略過後續青文補查。\n"
+                                 + str(status_job.get("message") or ""))
     status_event = crawl_status_event(status_job)
     extra_events = [event for event in (status_event,) if event]
     if email_failure:
@@ -66,14 +72,15 @@ def main() -> None:
     )
     print(
         json.dumps(
-            {"job": job, "rating_refresh": rating_result, "recent_recheck": recent_result,
+            {"job": job, "blocked_sources": sorted(blocked_sources),
+             "rating_refresh": rating_result, "recent_recheck": recent_result,
              "discord": discord_result, "email": email_result},
             ensure_ascii=False,
             default=str,
             indent=2,
         )
     )
-    if job.get("status") in {"partial", "failed"} or email_failure or recent_result.get("error") or recent_warnings:
+    if job.get("status") in {"partial", "failed"} or email_failure or recent_result.get("error") or recent_failures:
         raise SystemExit(1)
 
 

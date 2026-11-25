@@ -412,13 +412,18 @@ def backlog(code: str, now: datetime | None = None) -> dict:
             "oldest_days": max(0, (now - oldest).days) if oldest else 0}
 
 
-def run_recent_rechecks(*, scan: bool = True) -> dict:
+def run_recent_rechecks(*, scan: bool = True, skip_sources: set[str] | None = None) -> dict:
     from .crawler import SOURCES as CLASSES
     from .repository import upsert_book
     results = {}
     for code in SOURCES:
-        source = CLASSES[code]()
         result = {"scan": "not_due", "checked": 0, "inserted": 0, "updated": 0, "ignored": 0, "errors": []}
+        if code in (skip_sources or ()):
+            result["scan"] = "skipped_source_blocked"
+            _finish_recheck_result(code, result)
+            results[code] = result
+            continue
+        source = CLASSES[code]()
         deadline = time.monotonic() + SOURCE_SECONDS
 
         def drain():
@@ -457,13 +462,19 @@ def run_recent_rechecks(*, scan: bool = True) -> dict:
                 result.update(progress)
                 finish_scan(code, datetime.utcnow(), progress["pages"], progress["queued"], str(exc))
         drain()
-        result.update(backlog(code))
-        result["daily_limit"] = DAILY_PRODUCTS
-        result["warning"] = bool(result["errors"] or result["oldest_days"] >= 7)
+        _finish_recheck_result(code, result)
         results[code] = result
-        print(f"[recent-recheck] {code}: scan={result['scan']}, checked={result['checked']}, "
-              f"pending={result['pending']}, errors={len(result['errors'])}", flush=True)
     return results
+
+
+def _finish_recheck_result(code, result):
+    result.update(backlog(code))
+    result["daily_limit"] = DAILY_PRODUCTS
+    result["warning"] = bool(result["errors"] or result["scan"] == "partial")
+    result["backlog_warning"] = result["oldest_days"] >= 7
+    print(f"[recent-recheck] {code}: scan={result['scan']}, checked={result['checked']}, "
+          f"pending={result['pending']}, errors={len(result['errors'])}, "
+          f"backlog_warning={result['backlog_warning']}", flush=True)
 
 
 def main() -> None:
