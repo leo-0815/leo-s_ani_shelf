@@ -22,8 +22,8 @@ OFFICIAL = {
         ("detail", "https://www.kadokawa.com.tw/products/9786264452649", r"義妹生活", r"9786264452649"),
     ),
     "tongli": (
-        ("schedule", "https://www.tongli.com.tw/Search1.aspx?Page=1", r"出版", r"BooksDetail\.aspx"),
-        ("detail", "https://www.tongli.com.tw/BooksDetail.aspx?Bd=IC0336006", r"我的幸福婚姻", r"9786260279998"),
+        ("schedule", "https://www.tongli.com.tw/Search1.aspx?Page=1", r"書名[／/]集數", r"作者"),
+        ("detail", "https://www.tongli.com.tw/BooksDetail.aspx?Bd=IC0336006", r"我的幸福婚姻", r"978-?626-?02-?7999-?8"),
     ),
     "spp": (
         ("schedule", "https://event.spp.com.tw/event/publish.aspx", r"上市", r"書名|條碼|書號"),
