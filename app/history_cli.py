@@ -54,7 +54,7 @@ def run_full_menu() -> None:
     print("結束後會把已完成的本機書目同步回雲端。\n")
     print("[1] 執行 30 分鐘")
     print("[2] 執行 1 小時")
-    print("[3] 執行到目前年度區間完成")
+    print("[3] 各家目前年度／目錄各跑一輪")
     print("[4] 持續執行，直到按 Ctrl+C 手動停止")
     print("[Q] 離開\n")
     choice = input("請輸入選項：").strip().upper()
