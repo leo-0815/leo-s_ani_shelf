@@ -1,72 +1,41 @@
-"""Read-only Chingwin coverage benchmark against Kingstone and NCL open data.
-
-No database writes, no catalog mutations, no notifications.
-"""
+"""Compare a Chingwin sample with NCL open data and local retailer evidence."""
 from __future__ import annotations
 
 import argparse
 import csv
-import html
 import io
 import json
 import re
 import statistics
-import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import Request, build_opener
 
 from .models import detect_edition, extract_volume, infer_series_title, normalize_text
-from .publisher_shadow import LIMIT, USER_AGENT, OriginRedirect, Restricted, VisibleText
+from .publisher_shadow import USER_AGENT, OriginRedirect, Restricted
 
-KINGSTONE_BASE = "https://www.kingstone.com.tw"
-KINGSTONE_LIST_TEMPLATE = (
-    "https://www.kingstone.com.tw/bookpublish/publist/08025/"
-    "?subkind=all&classname=new&dis=pic&format=0&sort=sa_desc&page={page}"
-)
-KINGSTONE_DISALLOWED_PREFIXES = (
-    "/api/",
-    "/bms/",
-    "/dks/",
-    "/cart/",
-    "/refund/",
-    "/einvoice/",
-    "/wp-admin/",
-)
 NCL_DATASET_URL = "https://data.gov.tw/api/v2/rest/dataset/6730"
-STOP_STATUSES = {"challenge", "access_blocked", "login_required", "redirect_other_origin"}
+NCL_HOSTS = {"data.gov.tw", "www.ncl.edu.tw", "isbn.ncl.edu.tw"}
+NCL_PUBLISHER_HEADERS = {"出版機構", "出版機構簡稱"}
 SPECIAL_EDITIONS = {"special", "limited", "first_print", "bonus", "bundle", "deluxe", "collector"}
+RETAILER_HOSTS = {
+    "kingstone": "www.kingstone.com.tw",
+    "sanmin": "www.sanmin.com.tw",
+    "udn": "reading.udn.com",
+}
 
 
-def assert_robots_allowed(url: str) -> None:
-    """Refuse Kingstone paths disallowed by robots.txt."""
-    parsed = urlsplit(url)
-    if parsed.hostname and parsed.hostname.endswith("kingstone.com.tw"):
-        path = parsed.path.lower()
-        for prefix in KINGSTONE_DISALLOWED_PREFIXES:
-            if path.startswith(prefix):
-                raise Restricted(f"robots_disallowed:{prefix}")
-
-
-def fetch_text(url: str, *, timeout: int = 15, max_bytes: int = LIMIT) -> str:
-    """Single GET with origin-redirect guard and robots check. Never retries on 403/429."""
-    assert_robots_allowed(url)
-    request = Request(url, headers={"User-Agent": USER_AGENT})
-    with build_opener(OriginRedirect()).open(request, timeout=timeout) as response:
-        if response.headers.get("cf-mitigated", "").lower() == "challenge":
-            raise Restricted("challenge")
-        payload = response.read(max_bytes + 1)
-        if len(payload) > max_bytes:
-            raise ValueError("response_limit")
-        charset = response.headers.get_content_charset() or "utf-8"
-        return payload.decode(charset, errors="replace")
+def validate_ncl_url(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.netloc not in NCL_HOSTS:
+        raise ValueError("NCL URLs must use HTTPS on an official open-data or NCL host")
 
 
 def fetch_ncl_bytes(url: str, *, timeout: int = 20, max_bytes: int = 25 * 1024 * 1024) -> bytes:
     """Download an open-data resource from data.gov.tw / ncl.edu.tw."""
+    validate_ncl_url(url)
     request = Request(url, headers={"User-Agent": USER_AGENT})
     with build_opener(OriginRedirect()).open(request, timeout=timeout) as response:
         payload = response.read(max_bytes + 1)
@@ -84,18 +53,22 @@ def decode_csv_bytes(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def normalize_isbn13(raw: str | None) -> str | None:
-    """Return 13-digit 978/979 ISBN only; reject 471 GTIN barcodes."""
-    digits = re.sub(r"[^0-9]", "", raw or "")
-    if len(digits) == 13 and digits.startswith(("978", "979")):
+def fetch_ncl_metadata(url: str) -> str:
+    return fetch_ncl_bytes(url, max_bytes=3 * 1024 * 1024).decode("utf-8-sig")
+
+
+def _checked_13(raw: str | None, prefixes: tuple[str, ...]) -> str | None:
+    digits = re.sub(r"[-\s]", "", raw or "")
+    if re.fullmatch(r"[0-9]{13}", digits) and digits.startswith(prefixes) and (
+        sum(int(n) * (1 if i % 2 == 0 else 3) for i, n in enumerate(digits)) % 10 == 0
+    ):
         return digits
     return None
 
 
-def extract_gtin_471(text: str) -> str | None:
-    compact = re.sub(r"(?<=\d)[-\s]+(?=\d)", "", text or "")
-    m = re.search(r"(?<!\d)(471\d{10})(?!\d)", compact)
-    return m.group(1) if m else None
+def normalize_isbn13(raw: str | None) -> str | None:
+    """Return 13-digit 978/979 ISBN only; reject 471 GTIN barcodes."""
+    return _checked_13(raw, ("978", "979"))
 
 
 def normalize_volume(vol: str | None) -> str | None:
@@ -108,6 +81,7 @@ def normalize_volume(vol: str | None) -> str | None:
 
 
 def normalize_title_key(title: str) -> str:
+    title = re.sub(r"^(?:輕小說 |[〖【]電子書[〗】]\s*)", "", normalize_text(title))
     base = infer_series_title(title) or title
     base = normalize_text(base).casefold()
     return re.sub(r"[^\w\u4e00-\u9fff]+", "", base)
@@ -125,101 +99,61 @@ def media_bucket(edition_type: str | None, media_type: str | None) -> str:
     return "ebook" if (edition_type == "digital" or media_type == "ebook") else "print"
 
 
-def parse_kingstone_listing(markup: str) -> list[dict[str, Any]]:
-    """Parse product cards from a Kingstone publisher listing page."""
-    items: list[dict[str, Any]] = []
-    cards = re.split(r'(?=<div class="mod_prod_card\b)', markup)[1:]
-    for card in cards:
-        prod_match = re.search(r'data-prodno="(\d+)"', card)
-        title_match = re.search(r'<h3 class="pdnamebox[^"]*">\s*<a[^>]*>(.*?)</a>', card, re.S)
-        if not prod_match or not title_match:
-            continue
-        prodno = prod_match.group(1)
-        title = normalize_text(html.unescape(re.sub(r"<[^>]+>", "", title_match.group(1))))
-        date_match = re.search(r'<div class="pubdate">\s*(20\d{2})/(\d{1,2})/(\d{1,2})', card)
-        pub_date = (
-            date(int(date_match.group(1)), int(date_match.group(2)), int(date_match.group(3)))
-            if date_match
-            else None
-        )
-        items.append(
-            {
-                "prodno": prodno,
-                "url": urljoin(KINGSTONE_BASE, f"/basic/{prodno}/"),
-                "title": title,
-                "listing_pub_date": pub_date.isoformat() if pub_date else None,
-            }
-        )
-    return items
-
-
-def parse_kingstone_detail(markup: str, fallback_title: str = "") -> dict[str, Any]:
-    """Parse one Kingstone detail page, separating publication date from shipping date."""
-    parser = VisibleText()
-    parser.feed(markup)
-    text = " ".join(" ".join(parser.parts).split())
-
-    h1_match = re.search(r"<h1[^>]*>(.*?)</h1>", markup, re.S | re.I)
-    title = normalize_text(html.unescape(re.sub(r"<[^>]+>", "", h1_match.group(1)))) if h1_match else ""
-    if not title:
-        title = fallback_title
-
-    # Publication date: explicitly exclude 預計出貨 / 出貨日
-    cleaned_for_date = re.sub(r"(?:預計)?出貨(?:日期|日)?\s*[:：]?\s*20\d{2}[/.-]\d{1,2}[/.-]\d{1,2}", "", text)
-    pub_match = re.search(
-        r"出版(?:日期|日)\s*[:：]?\s*(20\d{2})[/.-](\d{1,2})[/.-](\d{1,2})", cleaned_for_date
-    )
-    pub_date = (
-        date(int(pub_match.group(1)), int(pub_match.group(2)), int(pub_match.group(3))).isoformat()
-        if pub_match
-        else None
-    )
-
-    # ISBN (978/979 only); 471 is GTIN
-    isbn_match = re.search(r"ISBN\s*[:：]?\s*([0-9-]{10,17})", text, re.I)
-    isbn = normalize_isbn13(isbn_match.group(1)) if isbn_match else None
-    gtin = extract_gtin_471(text)
-
-    # Media: print vs ebook
-    is_print = bool(re.search(r"裝訂\s*[:：]?\s*(?:紙本平裝|紙本精裝|平裝|精裝)|規格\s*[:：]\s*(?:平裝|精裝)", text))
-    is_ebook = bool(re.search(r"(?:裝訂|規格|出版形式)\s*[:：]?\s*電子書", text)) or (
-        not is_print and "電子書" in title
-    )
-    media = "ebook" if is_ebook else ("print" if is_print else "print")
-
-    edition = "digital" if media == "ebook" else detect_edition(title)
-    rating_match = re.search(r"分級\s*[:：]?\s*(限制級|輔15級|輔12級|保護級|普遍級)", text)
-    bl_marker = bool(re.search(r"級別\s*[^。]*\bBL\b", text))
-
-    return {
-        "title": title,
-        "isbn": isbn,
-        "gtin": gtin,
-        "retailer_publication_date": pub_date,
-        "media": media,
-        "edition_type": edition,
-        "volume": normalize_volume(extract_volume(title)),
-        "title_key": normalize_title_key(title),
-        "rating_raw": rating_match.group(1) if rating_match else None,
-        "bl_marker": bl_marker,
-    }
+def read_retailer_samples(path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Normalize manually checked metadata. Source URLs are evidence only, never fetched."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not payload or set(payload) - RETAILER_HOSTS.keys():
+        raise ValueError("expected local retailer samples keyed by a supported source")
+    normalized = {}
+    for source, rows in payload.items():
+        if not isinstance(rows, list) or not 1 <= len(rows) <= 100:
+            raise ValueError(f"{source}: expected 1–100 manually checked rows")
+        normalized[source] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError(f"{source}: expected an evidence row")
+            title = row.get("title")
+            url = urlsplit(row.get("source_url") or "")
+            publishers = {"青文", "青文出版", "青文出版社", "青文出版社股份有限公司"}
+            if source == "udn" and row.get("media") == "ebook":
+                publishers.add("悅文社")
+            if (not title or row.get("publisher") not in publishers
+                    or url.scheme != "https" or url.netloc != RETAILER_HOSTS[source]
+                    or row.get("media") not in {"print", "ebook"}
+                    or row.get("edition_type") not in SPECIAL_EDITIONS | {"standard", "digital"}):
+                raise ValueError(f"{source}: missing or conflicting title, publisher, origin, format, or edition")
+            if (row["edition_type"] == "digital") != (row["media"] == "ebook"):
+                raise ValueError(f"{source}: edition does not agree with media")
+            isbn, gtin = normalize_isbn13(row.get("isbn")), _checked_13(row.get("gtin"), ("471",))
+            if (row.get("isbn") and not isbn) or (row.get("gtin") and not gtin):
+                raise ValueError(f"{source}: invalid ISBN or GTIN")
+            if day := row.get("retailer_publication_date"):
+                date.fromisoformat(day)
+            normalized[source].append(row | {
+                "isbn": isbn, "gtin": gtin, "title_key": normalize_title_key(title),
+                "volume": normalize_volume(row.get("volume") or extract_volume(title)),
+            })
+    return normalized
 
 
 def parse_ncl_csv(csv_text: str) -> list[dict[str, Any]]:
-    """Parse NCL dataset 6730 CSV, keeping only 出版機構 == '青文' rows."""
+    """Parse NCL dataset 6730 CSV, accepting both publisher column names."""
     reader = csv.DictReader(io.StringIO(csv_text.lstrip("\ufeff")))
     rows: list[dict[str, Any]] = []
     for raw in reader:
-        if (raw.get("出版機構") or "").strip() != "青文":
+        if (raw.get("出版機構簡稱") or raw.get("出版機構") or "").strip() != "青文":
             continue
         title = normalize_text(raw.get("申請書名") or "")
         if not title:
             continue
         pub_raw = (raw.get("預訂出版日") or "").strip()
-        ym_match = re.match(r"^(20\d{2})-(\d{2})-\d{2}$", pub_raw)
+        ym_match = re.fullmatch(r"(20\d{2})-(0[1-9]|1[0-2])-\d{2}", pub_raw)
         planned_ym = f"{ym_match.group(1)}-{ym_match.group(2)}" if ym_match else None
-        fmt = f"{raw.get('出版形式') or ''} {raw.get('裝訂方式') or ''}"
-        media = "ebook" if "電子書" in fmt or "電子書" in title else "print"
+        fmt = " ".join((raw.get(k) or "") for k in ("出版形式", "裝訂方式", "資料類型"))
+        electronic = re.search(r"電子書|電子出版|數位|E-?PUB|PDF", fmt, re.I) or "電子書" in title
+        media = "ebook" if electronic else (
+            "print" if re.search(r"紙本|平裝|精裝|線裝|經摺裝", fmt) else None
+        )
         edition = "digital" if media == "ebook" else detect_edition(title)
         rows.append(
             {
@@ -237,127 +171,51 @@ def parse_ncl_csv(csv_text: str) -> list[dict[str, Any]]:
     return rows
 
 
-def collect_kingstone(
-    *,
-    max_listing_pages: int = 15,
-    max_details: int = 120,
-    min_listing_date: str = "2026-09-01",
-    detail_window_start: str = "2026-09-15",
-    load: Callable[[str], str] = fetch_text,
-    pause: Callable[[float], None] = time.sleep,
-) -> dict[str, Any]:
-    """Collect recent Chingwin records from Kingstone within strict page/detail caps."""
-    listing_items: list[dict[str, Any]] = []
-    seen_prodnos: set[str] = set()
-    status = "ok"
-    error_detail: str | None = None
-    pages_fetched = 0
-    listing_cap_hit = False
-
-    for page in range(1, max_listing_pages + 1):
-        url = KINGSTONE_LIST_TEMPLATE.format(page=page)
-        try:
-            markup = load(url)
-        except HTTPError as err:
-            status = "challenge" if err.headers.get("cf-mitigated", "").lower() == "challenge" else (
-                "access_blocked" if err.code in {401, 403, 429} else "http_error"
-            )
-            error_detail = f"HTTP {err.code}"
-            break
-        except Restricted as err:
-            status = str(err)
-            break
-        except (URLError, OSError, ValueError) as err:
-            status = "transport_or_response_error"
-            error_detail = str(err)
-            break
-
-        pages_fetched += 1
-        page_items = parse_kingstone_listing(markup)
-        if not page_items:
-            break
-        for item in page_items:
-            if item["prodno"] not in seen_prodnos:
-                seen_prodnos.add(item["prodno"])
-                listing_items.append(item)
-
-        dates = [it["listing_pub_date"] for it in page_items if it["listing_pub_date"]]
-        if dates and max(dates) < min_listing_date:
-            break
-        if page == max_listing_pages:
-            listing_cap_hit = True
-        pause(1.0)
-
-    candidates = [
-        it for it in listing_items
-        if not it["listing_pub_date"] or it["listing_pub_date"] >= detail_window_start
-    ]
-    detail_cap_hit = len(candidates) > max_details
-    records: list[dict[str, Any]] = []
-    details_fetched = 0
-
-    if status not in STOP_STATUSES:
-        for it in candidates[:max_details]:
-            pause(1.0)
-            try:
-                d_markup = load(it["url"])
-            except HTTPError as err:
-                status = "challenge" if err.headers.get("cf-mitigated", "").lower() == "challenge" else (
-                    "access_blocked" if err.code in {401, 403, 429} else "http_error"
-                )
-                error_detail = f"detail HTTP {err.code}"
-                break
-            except Restricted as err:
-                status = str(err)
-                break
-            except (URLError, OSError, ValueError):
-                continue
-            details_fetched += 1
-            parsed = parse_kingstone_detail(d_markup, fallback_title=it["title"])
-            if not parsed["retailer_publication_date"] and it["listing_pub_date"]:
-                parsed["retailer_publication_date"] = it["listing_pub_date"]
-            parsed["url"] = it["url"]
-            parsed["prodno"] = it["prodno"]
-            records.append(parsed)
-
-    return {
-        "status": status,
-        "error": error_detail,
-        "listing_pages_fetched": pages_fetched,
-        "listing_items_seen": len(listing_items),
-        "details_fetched": details_fetched,
-        "listing_cap_hit": listing_cap_hit,
-        "detail_cap_hit": detail_cap_hit,
-        "records": records,
-    }
-
-
 def collect_ncl(
     *,
     ncl_months: int = 3,
-    load_meta: Callable[[str], str] = fetch_text,
+    csv_urls: list[str] | None = None,
+    load_meta: Callable[[str], str] = fetch_ncl_metadata,
     load_csv_bytes: Callable[[str], bytes] = fetch_ncl_bytes,
 ) -> dict[str, Any]:
     """Fetch latest N monthly CSVs from data.gov.tw dataset 6730 and filter Chingwin."""
-    try:
-        meta = json.loads(load_meta(NCL_DATASET_URL)).get("result", {})
-    except Exception as exc:
-        return {"status": "error", "error": str(exc), "distributions": [], "records": []}
-
-    dists = [d for d in meta.get("distribution", []) if d.get("resourceDownloadUrl")]
-    selected = dists[-ncl_months:] if ncl_months > 0 else []
+    if csv_urls:
+        selected = [{"resourceDownloadUrl": url} for url in dict.fromkeys(csv_urls)]
+    else:
+        try:
+            meta = json.loads(load_meta(NCL_DATASET_URL)).get("result", {})
+            dists = []
+            for dist in meta.get("distribution", []):
+                if not dist.get("resourceDownloadUrl"):
+                    continue
+                match = re.search(r"(\d{3})年(\d{1,2})月", dist.get("resourceDescription") or "")
+                if match:
+                    dists.append((tuple(map(int, match.groups())), dist))
+            selected = [dist for _, dist in sorted(dists, key=lambda pair: pair[0])[-ncl_months:]]
+        except (AttributeError, TypeError, ValueError, OSError) as exc:
+            return {"status": "error", "error": str(exc), "distributions": [], "records": []}
     records: list[dict[str, Any]] = []
     used: list[dict[str, Any]] = []
+    failed = 0
     for dist in selected:
         url = dist["resourceDownloadUrl"]
         desc = dist.get("resourceDescription") or url
-        raw_bytes = load_csv_bytes(url)
-        parsed = parse_ncl_csv(decode_csv_bytes(raw_bytes))
+        try:
+            validate_ncl_url(url)
+            csv_text = decode_csv_bytes(load_csv_bytes(url))
+            header = next(csv.reader(io.StringIO(csv_text)), [])
+            if not {"申請書名", "ISBN"}.issubset(header) or not NCL_PUBLISHER_HEADERS.intersection(header):
+                raise ValueError("NCL CSV does not have the expected headers")
+            parsed = parse_ncl_csv(csv_text)
+        except (Restricted, ValueError, OSError, csv.Error) as exc:
+            failed += 1
+            used.append({"description": desc, "status": "error", "error": str(exc)})
+            continue
         records.extend(parsed)
         used.append({"description": desc, "url": url, "chingwin_rows": len(parsed)})
 
     return {
-        "status": "ok",
+        "status": "partial" if failed and records else ("ok" if records else "unverified"),
         "attribution": "國家圖書館 (data.gov.tw/dataset/6730)",
         "distributions": used,
         "chingwin_rows_loaded": len(records),
@@ -369,25 +227,39 @@ def match_baseline_row(base: dict[str, Any], candidates: list[dict[str, Any]]) -
     """Match one baseline row against source candidates without cross-media merging."""
     b_media = media_bucket(base.get("edition_type"), base.get("media_type"))
     b_isbn = normalize_isbn13(base.get("isbn"))
-    if b_isbn:
-        isbn_hits = [c for c in candidates if c.get("isbn") == b_isbn and c.get("media") == b_media]
+    b_gtin = _checked_13(base.get("gtin"), ("471",))
+    b_title_key = normalize_title_key(base.get("title") or "")
+    b_vol = normalize_volume(base.get("volume_label") or extract_volume(base.get("title") or ""))
+    b_edition = base.get("edition_type") or "standard"
+    if b_isbn or b_gtin:
+        id_field, value = ("isbn", b_isbn) if b_isbn else ("gtin", b_gtin)
+        identified = [c for c in candidates if c.get(id_field) == value]
+        isbn_hits = [c for c in identified if c.get("media") == b_media
+                     and c.get("edition_type") == b_edition
+                     and (id_field != "gtin" or c.get("title_key") == b_title_key)
+                     and (c.get("volume") in {None, b_vol} or b_vol is None)]
         if len(isbn_hits) == 1:
             return "hit", isbn_hits[0]
         if len(isbn_hits) > 1:
             return "ambiguous", None
+        unresolved_ids = [c for c in identified if c.get("media") in {None, b_media}
+                          and (c.get("volume") in {None, b_vol} or b_vol is None)]
+        if len(unresolved_ids) == 1:
+            return "isbn_unverified", unresolved_ids[0]
+        if len(unresolved_ids) > 1:
+            return "ambiguous", None
 
-    b_title_key = normalize_title_key(base.get("title") or "")
-    b_vol = normalize_volume(base.get("volume_label") or extract_volume(base.get("title") or ""))
-    b_bucket = edition_bucket(base.get("edition_type"), base.get("media_type"))
     title_hits = [
         c for c in candidates
-        if c.get("media") == b_media
+        if b_title_key and c.get("media") == b_media
         and c.get("title_key") == b_title_key
         and c.get("volume") == b_vol
-        and edition_bucket(c.get("edition_type"), c.get("media")) == b_bucket
+        and c.get("edition_type") == b_edition
+        and not (b_isbn and c.get("isbn") and c["isbn"] != b_isbn)
+        and not (b_gtin and c.get("gtin") and c["gtin"] != b_gtin)
     ]
     if len(title_hits) == 1:
-        return "hit", title_hits[0]
+        return "title_only", title_hits[0]
     if len(title_hits) > 1:
         return "ambiguous", None
     return "miss", None
@@ -397,9 +269,16 @@ def evaluate_source(
     baseline: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
     *,
-    reference_date: date = date(2026, 11, 25),
+    reference_date: date | None = None,
     date_field: str | None = None,
 ) -> dict[str, Any]:
+    reference_date = reference_date or datetime.now(timezone(timedelta(hours=8))).date()
+    # Multiple monthly files may repeat the same record. Do not count identical
+    # copies twice, but retain contradictory format/edition/volume evidence.
+    candidates = list({
+        tuple(row.get(field) for field in ("isbn", "gtin", "title_key", "volume", "media", "edition_type", date_field or "")): row
+        for row in candidates
+    }.values())
     buckets: dict[str, dict[str, int]] = {}
     offsets: list[int] = []
     pre_listing_14d_total = 0
@@ -407,10 +286,11 @@ def evaluate_source(
 
     for row in baseline:
         rel_str = str(row.get("release_date") or "")[:10]
-        ym = rel_str[:7] if len(rel_str) >= 7 else "unknown"
+        ym = row.get("announcement_month") or (rel_str[:7] if len(rel_str) >= 7 else "unknown")
         eb = edition_bucket(row.get("edition_type"), row.get("media_type"))
         key = f"{ym}|{eb}"
-        stats = buckets.setdefault(key, {"baseline": 0, "hit": 0, "miss": 0, "ambiguous": 0})
+        stats = buckets.setdefault(key, {"baseline": 0, "hit": 0, "isbn_unverified": 0, "title_only": 0,
+                                         "miss": 0, "ambiguous": 0})
         stats["baseline"] += 1
 
         outcome, matched = match_baseline_row(row, candidates)
@@ -452,15 +332,18 @@ def format_markdown_summary(report: dict[str, Any]) -> str:
         f"Baseline rows: {report['baseline']['total']}",
         f"NCL attribution: {report['attribution']['ncl']}",
         "",
-        "| Source | Month | Edition | Baseline | Hit | Miss | Ambiguous | Hit rate |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        *(f"{src}: {details['status']}" for src, details in report["sources"].items()),
+        "",
+        "| Source | Announcement month | Edition | Baseline | ID hit | ID details unverified | Title only | Not seen | Ambiguous | ID hit rate |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for src_name in ("kingstone", "ncl"):
-        cov = report["sources"][src_name].get("coverage", {})
+    for src_name, details in report["sources"].items():
+        cov = details.get("coverage", {})
         for key, st in cov.items():
             ym, eb = key.split("|", 1)
             lines.append(
-                f"| {src_name} | {ym} | {eb} | {st['baseline']} | {st['hit']} | {st['miss']} | {st['ambiguous']} | {st['hit_rate']:.1%} |"
+                f"| {src_name} | {ym} | {eb} | {st['baseline']} | {st['hit']} | {st['isbn_unverified']} | "
+                f"{st['title_only']} | {st['miss']} | {st['ambiguous']} | {st['hit_rate']:.1%} |"
             )
     return "\n".join(lines)
 
@@ -469,37 +352,44 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Read-only Chingwin coverage benchmark.")
     parser.add_argument("--baseline", required=True, help="Path to baseline JSON export.")
     parser.add_argument("--ncl-months", type=int, default=3, help="Number of latest NCL CSVs to load.")
-    parser.add_argument("--max-listing-pages", type=int, default=15, help="Max Kingstone listing pages.")
-    parser.add_argument("--max-details", type=int, default=120, help="Max Kingstone detail fetches.")
+    parser.add_argument("--ncl-csv", action="append", help="Use a published NCL CSV URL; repeat for multiple months.")
+    parser.add_argument("--skip-ncl", action="store_true", help="Make the comparison completely offline.")
+    parser.add_argument("--retailer-samples", type=Path, help="Local JSON of manually reviewed retailer samples; never fetched.")
     parser.add_argument("--out", required=True, help="Output JSON report path.")
     args = parser.parse_args()
 
     baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
-    ks = collect_kingstone(max_listing_pages=args.max_listing_pages, max_details=args.max_details)
-    ncl = collect_ncl(ncl_months=args.ncl_months)
-
-    ks_eval = evaluate_source(baseline, ks["records"], date_field="retailer_publication_date")
-    ncl_eval = evaluate_source(baseline, ncl["records"], date_field=None)
+    if not isinstance(baseline, list) or not baseline or any(not isinstance(row, dict) or not row.get("title") for row in baseline):
+        parser.error("--baseline must contain a nonempty JSON array of book rows")
+    if not 1 <= args.ncl_months <= 12 or len(args.ncl_csv or []) > 12:
+        parser.error("select between 1 and 12 NCL distributions")
+    retailer_samples = read_retailer_samples(args.retailer_samples) if args.retailer_samples else {}
+    ncl = ({"status": "not_run", "records": []} if args.skip_ncl
+           else collect_ncl(ncl_months=args.ncl_months, csv_urls=args.ncl_csv))
+    ncl_eval = evaluate_source(baseline, ncl["records"]) if ncl["records"] else {}
 
     report = {
         "mode": "read_only",
         "actual_catalog_write": False,
         "attribution": {"ncl": "國家圖書館 (data.gov.tw/dataset/6730)"},
-        "note": "Single snapshot measures presence and retailer-vs-official date offset only; true listing lead/lag requires repeated daily snapshots.",
+        "note": "Not seen means missing from the reviewed sample, not absent from a catalog. Order, coverage, and listing lead/lag are not measured.",
         "baseline": {
             "total": len(baseline),
             "day_precision": sum(1 for r in baseline if r.get("release_precision") == "day"),
             "month_precision": sum(1 for r in baseline if r.get("release_precision") == "month"),
         },
         "sources": {
-            "kingstone": {
-                k: v for k, v in ks.items() if k != "records"
-            } | ks_eval,
             "ncl": {
                 k: v for k, v in ncl.items() if k != "records"
             } | ncl_eval,
         },
     }
+    for source, records in retailer_samples.items():
+        report["sources"][source] = {
+            "status": "manual_evidence_only",
+            "automatic_access_verified": False,
+            "evidence_records": len(records),
+        } | evaluate_source(baseline, records, date_field="retailer_publication_date")
     Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(format_markdown_summary(report))
 

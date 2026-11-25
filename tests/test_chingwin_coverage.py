@@ -1,53 +1,21 @@
+import json
+import tempfile
 import unittest
-from email.message import Message
-from urllib.error import HTTPError
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from app.chingwin_coverage import (
-    assert_robots_allowed,
-    collect_kingstone,
+    collect_ncl,
+    evaluate_source,
+    main,
     match_baseline_row,
-    parse_kingstone_detail,
-    parse_kingstone_listing,
+    normalize_isbn13,
     parse_ncl_csv,
+    read_retailer_samples,
 )
-from app.publisher_shadow import Restricted
 
-LISTING_FIXTURE = """
-<div class="mod_prod_card shadow-med" data-prodno="2019462329381">
-  <h3 class="pdnamebox height2">
-    <a href="/basic/2019462329381/">別看我，老師(04)</a>
-  </h3>
-  <div class="pubdate">2026/11/19&nbsp;出版</div>
-</div>
-"""
-
-
+FIXTURES = Path(__file__).parent / "fixtures"
 class ChingwinCoverageTest(unittest.TestCase):
-    def test_robots_disallowed_paths_rejected(self):
-        for bad in (
-            "https://www.kingstone.com.tw/api/book/123",
-            "https://www.kingstone.com.tw/cart/",
-            "https://www.kingstone.com.tw/Refund/apply",
-            "https://www.kingstone.com.tw/wp-admin/",
-        ):
-            with self.assertRaises(Restricted):
-                assert_robots_allowed(bad)
-        assert_robots_allowed("https://www.kingstone.com.tw/bookpublish/publist/08025/")
-        assert_robots_allowed("https://www.kingstone.com.tw/basic/2019462329381/")
-
-    def test_471_gtin_not_treated_as_isbn_and_shipping_date_ignored(self):
-        html = """
-        <h1>測試漫畫(01)</h1>
-        <div>條碼：4711234567890 裝訂：紙本平裝 預計出貨：2026/11/30</div>
-        <script>出版日期：2026/11/01</script>
-        <div>出版日：2026/11/19</div>
-        """
-        parsed = parse_kingstone_detail(html)
-        self.assertIsNone(parsed["isbn"])
-        self.assertEqual(parsed["gtin"], "4711234567890")
-        self.assertEqual(parsed["retailer_publication_date"], "2026-11-19")
-        self.assertEqual(parsed["media"], "print")
-
     def test_same_isbn_print_vs_ebook_not_merged(self):
         base_ebook = {
             "title": "測試作品(01)(電子書)",
@@ -101,23 +69,74 @@ class ChingwinCoverageTest(unittest.TestCase):
         self.assertEqual(rows[0]["isbn"], "9786260303778")
         self.assertEqual(rows[0]["media"], "print")
 
-    def test_listing_fixture_and_challenge_stops_kingstone(self):
-        items = parse_kingstone_listing(LISTING_FIXTURE)
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["prodno"], "2019462329381")
-        self.assertEqual(items[0]["listing_pub_date"], "2026-11-19")
+    def test_ncl_alternate_header_and_unknown_format(self):
+        row, = parse_ncl_csv(
+            "申請書名,出版機構簡稱,ISBN,裝訂方式,出版形式\n"
+            "測試作品,青文,9786260303778,,單行本\n"
+        )
+        self.assertIsNone(row["media"])
+        self.assertEqual(row["isbn"], "9786260303778")
+        self.assertIsNone(normalize_isbn13("9786260303770"))
 
-        headers = Message()
-        headers["Cf-Mitigated"] = "challenge"
+    def test_ncl_uses_only_official_urls_and_keeps_partial_results(self):
+        load = Mock(return_value="申請書名,出版機構簡稱,ISBN\n測試,青文,9786260303778\n".encode())
+        allowed = "https://isbn.ncl.edu.tw/example.csv"
+        out = collect_ncl(csv_urls=[allowed, "https://isbn.ncl.edu.tw.evil.invalid/example.csv"], load_csv_bytes=load)
+        load.assert_called_once_with(allowed)
+        self.assertEqual(out["status"], "partial")
+        self.assertEqual(len(out["records"]), 1)
 
-        def challenged(url):
-            raise HTTPError(url, 403, "Forbidden", headers, None)
+    def test_same_isbn_with_wrong_edition_is_not_a_hit(self):
+        base = dict(title="測試作品(01)(特典版)", edition_type="bonus",
+                    media_type="manga", isbn="9786264499903", volume_label="1")
+        standard = dict(isbn=base["isbn"], media="print", edition_type="standard", volume="1")
+        self.assertEqual(match_baseline_row(base, [standard])[0], "isbn_unverified")
+        base["edition_type"] = "standard"
+        out = evaluate_source([base], [standard, dict(standard)])
+        self.assertEqual(out["coverage"]["unknown|standard"]["hit"], 1)
 
-        res = collect_kingstone(load=challenged, pause=lambda _: None)
-        self.assertEqual(res["status"], "challenge")
-        self.assertEqual(res["listing_pages_fetched"], 0)
-        self.assertEqual(res["records"], [])
+    def test_title_only_is_not_counted_as_isbn_hit(self):
+        base = dict(title="測試作品(01)", edition_type="standard", media_type="manga")
+        candidate = dict(media="print", edition_type="standard", volume="1", title_key="測試作品",
+                         isbn="9786264499903")
+        self.assertEqual(match_baseline_row(base, [candidate])[0], "title_only")
 
+    def test_offline_comparison_never_opens_sources_or_promotes_listings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "report.json"
+            with patch("sys.argv", ["chingwin-coverage", "--baseline",
+                                    str(FIXTURES / "chingwin_oct_nov_2026_sample.json"),
+                                    "--retailer-samples", str(FIXTURES / "chingwin_retailer_manual_samples.json"),
+                                    "--skip-ncl", "--out", str(out)]), patch(
+                                        "app.chingwin_coverage.build_opener"
+                                    ) as opener, patch("builtins.print"):
+                main()
+            opener.assert_not_called()
+            data = json.loads(out.read_text(encoding="utf-8"))
+            sources = data["sources"]
+            self.assertFalse(data["actual_catalog_write"])
+            self.assertFalse(sources["kingstone"]["automatic_access_verified"])
+            self.assertEqual(sum(x["hit"] for x in sources["kingstone"]["coverage"].values()), 5)
+            self.assertEqual(sources["kingstone"]["date_offset_days"]["min_days"], -20)
+            self.assertEqual(sum(x["title_only"] for x in sources["sanmin"]["coverage"].values()), 3)
+            self.assertEqual(sources["udn"]["coverage"]["2026-11|digital"]["title_only"], 1)
+
+    def test_local_evidence_requires_the_retailer_origin_and_valid_identifiers(self):
+        row = dict(title="測試(01)", publisher="青文", media="print", edition_type="standard",
+                   isbn="9786264499903", source_url="https://www.kingstone.com.tw/basic/123/")
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "samples.json"
+            for invalid in (dict(source_url="https://www.kingstone.com.tw.attacker.invalid/basic/123/"),
+                            dict(publisher="香港青文"), dict(isbn="4718016048263")):
+                source.write_text(json.dumps({"kingstone": [row | invalid]}), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    read_retailer_samples(source)
+
+    def test_gtin_remains_separate_from_isbn_and_needs_same_title(self):
+        base = dict(title="示範書盒", gtin="4718016048263", edition_type="bundle", media_type="manga")
+        candidate = dict(gtin=base["gtin"], media="print", edition_type="bundle", title_key="示範書盒")
+        self.assertEqual(match_baseline_row(base, [candidate])[0], "hit")
+        self.assertEqual(match_baseline_row(base, [candidate | {"title_key": "另一套"}])[0], "isbn_unverified")
 
 if __name__ == "__main__":
     unittest.main()
