@@ -27,3 +27,11 @@
     python -m app.chingwin_coverage --baseline tests/fixtures/chingwin_oct_nov_2026_sample.json --retailer-samples tests/fixtures/chingwin_retailer_manual_samples.json --skip-ncl --out chingwin-retailer-sample-report.json
 
 下一階段：獲准後，先在 GitHub runner 用有限請求記錄每日同版樣本首次出現時間（不寫庫）；沒有授權或穩定性、欄位正確性不足，維持目前日更與書目不變。若只獲得國圖開放資料，做月度候選，不宣稱恢復日更。
+
+## 國圖月度候選（唯讀）
+
+國家圖書館的[臺灣出版新書預告書訊](https://data.gov.tw/dataset/6730)依[政府資料開放授權條款－第 1 版](https://data.gov.tw/license)釋出。資料月份是 ISBN 申請資料檔的月份，不是上市月份。報告保留資料提供者、資料集、授權及原始 CSV 連結。
+
+合併到預設分支後，GitHub Actions 每月 6 日台灣時間 09:17 排程執行，也可手動觸發。流程只讀取資料集目錄及最近三個發布月份的 CSV，報告會標示最近列出的月份和實際讀到的月份。報告不查 AniShelf 書目，候選不等於缺書；ISBN 和紙本／電子分開核對。格式不明、同 ISBN 同媒體但卷次或版本衝突的資料不進候選。預訂月份、版次線索都不會覆寫官網商品資料；不採用封面或分級，不使用資料庫憑證，也不更動每日更新。
+
+    python -m app.chingwin_coverage --ncl-months 3 --monthly-candidates --baseline tests/fixtures/chingwin_oct_nov_2026_sample.json --out chingwin-ncl-review.json
