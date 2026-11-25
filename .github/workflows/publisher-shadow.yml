@@ -1,0 +1,38 @@
+name: Publisher source shadow check
+
+on:
+  pull_request:
+    paths:
+      - app/publisher_shadow.py
+      - .github/workflows/publisher-shadow.yml
+  workflow_dispatch:
+    inputs:
+      approved_retailer_probe:
+        description: Include retailer samples only after verifying automated use is permitted
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  public-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check public pages without access to production settings
+        env:
+          RETAILER_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.approved_retailer_probe }}
+        shell: bash
+        run: |
+          set -o pipefail
+          args=()
+          if [[ "$RETAILER_PROBE" == "true" ]]; then args+=(--retailers); fi
+          printf '## Bounded public source samples\n\n```json\n' >> "$GITHUB_STEP_SUMMARY"
+          python -m app.publisher_shadow "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
