@@ -234,7 +234,9 @@ def _detail(row, url, markup):
         if len(choices) != 1:
             raise ValueError('青文單本頁沒有可確認的媒體分類')
         media = 'manga' if '漫畫' in choices else 'novel'
-        records, _ = ChingWinSource()._parse_catalog_page(url, media, markup, date.min)
+        records, _ = ChingWinSource()._parse_catalog_page(
+            page_url=url, markup=markup, media_type=media, cutoff=date.min,
+        )
         return [b for b in records if product_url(code, url, b.source_url) == url]
     return [book] if book else []
 

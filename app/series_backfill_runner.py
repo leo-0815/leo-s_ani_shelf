@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict, deque
 from contextlib import closing, contextmanager
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 import json
 from pathlib import Path
 import sqlite3
@@ -134,7 +134,7 @@ def _record(conn, row, result, now):
                 continue
             cursor = conn.execute('INSERT INTO review (code,source_key,isbn,payload) VALUES (?,?,?,?)',
                                   (book.publisher_code, book.source_key, book.isbn,
-                                   json.dumps(asdict(book), default=date.isoformat, ensure_ascii=False)))
+                                   json.dumps(asdict(book), default=_serialize_date, ensure_ascii=False)))
             added += cursor.rowcount
         volumes_found = {volume(book.volume_label) for book in result.books if _accept(row, book)}
         conn.execute('INSERT OR REPLACE INTO series_checks VALUES (?,?,?,?,?,?)', (*_identity(row), now, status,
@@ -181,12 +181,23 @@ LABELS = {
 }
 
 
+def _serialize_date(value):
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f'Unsupported review field: {type(value).__name__}')
+
+
 def pending(conn):
     for key, payload in conn.execute("SELECT id,payload FROM review WHERE status='pending' ORDER BY id LIMIT ?",
                                      (REVIEW_LIMIT,)):
         fields = json.loads(payload)
         if fields['release_date']:
             fields['release_date'] = date.fromisoformat(fields['release_date'])
+        for key_name in ('rating_checked_at', 'release_checked_at'):
+            if fields.get(key_name):
+                raw = fields[key_name]
+                # Older review files may have lost the time; do not invent one.
+                fields[key_name] = datetime.fromisoformat(raw) if len(raw) > 10 else None
         yield key, BookRecord(**fields)
 
 
