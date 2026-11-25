@@ -133,8 +133,10 @@ def _run_job(
         )
         paused = False
         for code in codes:
-            source = SOURCES[code]()
+            source_name = code
             try:
+                source = SOURCES[code]()
+                source_name = source.name
                 if mode == "backfill":
                     print(f"大型回填：開始 {source.name}…", flush=True)
                 state = get_sync_state(code)
@@ -215,7 +217,7 @@ def _run_job(
                     break
             except Exception as exc:
                 totals["errors"] += 1
-                message = f"{source.name}：{exc}"
+                message = f"{source_name}：{exc}"
                 messages.append(message)
                 _mark_source(code, message)
                 if mode == "backfill":
