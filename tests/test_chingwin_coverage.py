@@ -9,6 +9,7 @@ from app.chingwin_coverage import (
     evaluate_source,
     main,
     match_baseline_row,
+    monthly_candidates,
     normalize_isbn13,
     parse_ncl_csv,
     read_retailer_samples,
@@ -85,6 +86,40 @@ class ChingwinCoverageTest(unittest.TestCase):
         load.assert_called_once_with(allowed)
         self.assertEqual(out["status"], "partial")
         self.assertEqual(len(out["records"]), 1)
+
+    def test_ncl_reports_latest_listed_month_even_when_latest_download_fails(self):
+        urls = [f"https://www.ncl.edu.tw/{i}.csv" for i in (8, 9)]
+        meta = json.dumps({"result": {"distribution": [
+            {"resourceDownloadUrl": urls[0], "resourceDescription": "115年8月份"},
+            {"resourceDownloadUrl": urls[0], "resourceDescription": "115年8月份"},
+            {"resourceDownloadUrl": urls[1], "resourceDescription": "115年9月份"},
+        ]}})
+        load = Mock(side_effect=[
+            "申請書名,出版機構,ISBN\n測試,青文,9786260303778\n".encode(), OSError("unavailable"),
+        ])
+        result = collect_ncl(ncl_months=2, load_meta=lambda _: meta, load_csv_bytes=load)
+        self.assertEqual(load.call_count, 2)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["latest_listed_month"], "2026-09")
+        self.assertEqual(result["latest_read_month"], "2026-08")
+
+    def test_monthly_candidates_hold_conflicts_and_never_join_print_and_ebook(self):
+        row = dict(isbn="9786260303778", media="print", title="測試(01)", title_key="測試",
+                   volume="1", edition_type="standard", planned_ym="2026-10", dataset_month="2026-08",
+                   resource_url="https://www.ncl.edu.tw/old.csv", rating_raw="限制級")
+        latest = row | {"dataset_month": "2026-09", "planned_ym": "2026-11",
+                        "resource_url": "https://www.ncl.edu.tw/new.csv"}
+        ebook = row | {"media": "ebook", "edition_type": "digital"}
+        unknown = row | {"media": None}
+        review = monthly_candidates([row, latest, ebook, unknown])
+        self.assertEqual(review["candidate_count"], 2)
+        self.assertEqual(review["unresolved_rows"], 1)
+        paper = next(book for book in review["candidates"] if book["media"] == "print")
+        self.assertEqual(paper["planned_month"], "2026-11")
+        self.assertNotIn("release_date", paper)
+        self.assertNotIn("rating_raw", paper)
+        self.assertEqual(monthly_candidates([row, row | {"volume": "2"}])["conflicting_groups"], 1)
+        self.assertEqual(monthly_candidates([row, row | {"planned_ym": "2026-12"}])["candidate_count"], 0)
 
     def test_same_isbn_with_wrong_edition_is_not_a_hit(self):
         base = dict(title="測試作品(01)(特典版)", edition_type="bonus",
