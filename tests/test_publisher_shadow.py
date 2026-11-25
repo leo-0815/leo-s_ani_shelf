@@ -34,5 +34,23 @@ class PublisherShadowTest(unittest.TestCase):
         self.assertIsNone(retail_detail(base + "<script>出版日：2026/09/02</script>"))
 
 
+    def test_tongli_markers_match_schedule_table_and_hyphenated_isbn(self):
+        def load(url):
+            if "Search1.aspx" in url:
+                return "<table><tr><th>書名／集數</th><th>作者</th></tr></table>"
+            if "BooksDetail.aspx" in url:
+                return "<h1>我的幸福婚姻</h1><span>ISBN：978-626-02-7999-8</span>"
+            return "<html>not validated</html>"
+
+        report = run(load=load, pause=lambda _: None)
+        self.assertEqual(
+            report["sources"]["tongli"],
+            {
+                "schedule": {"status": "sample_verified"},
+                "detail": {"status": "sample_verified"},
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
