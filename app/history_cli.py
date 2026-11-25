@@ -15,7 +15,10 @@ OPTIONS = {
 
 def main(argv: Sequence[str] = ()) -> None:
     parser = argparse.ArgumentParser(description="AniShelf 歷史書目更新")
-    parser.add_argument("--preflight", action="store_true", help="只檢查工具與既有報告，不連線")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--preflight", action="store_true", help="只檢查工具與既有報告，不連線")
+    mode.add_argument("--series-preview", type=int, choices=range(1, 7), metavar="1–6",
+                      help="試查指定數量的系列；不新增書目、保存進度或上傳")
     parser.add_argument("--project-dir", type=Path, help="指定要檢查的既有專案（僅限預檢）")
     args = parser.parse_args(argv)
     if args.project_dir is not None and not args.preflight:
@@ -27,11 +30,16 @@ def main(argv: Sequence[str] = ()) -> None:
         except (ValueError, OSError) as exc:
             parser.error(str(exc))
         return
+    if args.series_preview is not None:
+        from .series_backfill_runner import run_preview
+        run_preview(args.series_preview)
+        return
 
     print("\nAniShelf 歷史書目更新")
     print("[1] 自動補查系列缺卷")
     print("[2] 地毯式回填（從斷點續跑）")
     print("[3] 唯讀預檢（不連線）")
+    print("[M] 手動指定系列")
     print("[Q] 離開")
     choice = input("請輸入選項：").strip().upper()
     if choice == "1":
@@ -41,6 +49,9 @@ def main(argv: Sequence[str] = ()) -> None:
         run_full_menu()
     elif choice == "3":
         main(("--preflight",))
+    elif choice == "M":
+        from .series_backfill import interactive_series
+        interactive_series()
     elif choice != "Q":
         raise SystemExit("無效選項。")
 
