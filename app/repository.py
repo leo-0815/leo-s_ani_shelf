@@ -70,6 +70,7 @@ def upsert_book(
     *,
     change_origin: str = "crawler",
     source_hash_override: str | None = None,
+    insert_only: bool = False,
 ) -> str:
     if change_origin not in CHANGE_ORIGINS:
         raise ValueError("Invalid catalog change origin")
@@ -87,6 +88,22 @@ def upsert_book(
                 (publisher_id, record.source_key),
             )
             existing = cursor.fetchone()
+            if insert_only:
+                label = data.get('volume_label') or ''
+                if (existing is not None or not data['isbn'] or not data['series_key']
+                        or not re.fullmatch(r'[0-9]{1,3}', label) or int(label) < 1):
+                    return "unchanged"
+                cursor.execute("SELECT id FROM books WHERE isbn = %s LIMIT 1 FOR UPDATE", (data['isbn'],))
+                if cursor.fetchone() is not None:
+                    return "unchanged"
+                cursor.execute(
+                    "SELECT id FROM books WHERE publisher_id = %s AND series_key = %s "
+                    "AND media_type = %s AND edition_type = %s AND volume_label IN (%s,%s,%s) LIMIT 1 FOR UPDATE",
+                    (publisher_id, data['series_key'], data['media_type'], data['edition_type'],
+                     *(str(int(label)).zfill(width) for width in (1, 2, 3))),
+                )
+                if cursor.fetchone() is not None:
+                    return "unchanged"
             migrate_source_key = False
             if existing is None and record.publisher_code == "chingwin":
                 existing = _find_chingwin_schedule_row(
@@ -98,6 +115,8 @@ def upsert_book(
             if existing is None and record.publisher_code == "tongli":
                 existing = _find_tongli_matching_row(cursor, publisher_id, data)
                 if existing is not None and _is_tongli_schedule(data):
+                    if insert_only:
+                        return "unchanged"
                     cursor.execute(
                         "UPDATE books SET last_seen_at = CURRENT_TIMESTAMP WHERE id = %s",
                         (existing["id"],),
@@ -106,6 +125,8 @@ def upsert_book(
                 migrate_source_key = (
                     existing is not None and not _is_tongli_schedule(data)
                 )
+            if insert_only and existing is not None:
+                return "unchanged"
             if existing is None:
                 columns = ", ".join(("publisher_id", "source_key", *BOOK_FIELDS))
                 placeholders = ", ".join(["%s"] * (2 + len(BOOK_FIELDS)))
@@ -116,7 +137,7 @@ def upsert_book(
                 )
                 book_id = int(cursor.lastrowid)
                 normalized_series = data.get("series_key") or ""
-                if normalized_series:
+                if normalized_series and not insert_only:
                     cursor.execute(
                         "SELECT 1 FROM followed_series WHERE publisher_id = %s "
                         "AND normalized_series = %s AND media_type = %s",
