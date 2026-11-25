@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import sqlite3
 import time
+from inspect import signature
 
 from .config import ROOT
 from .db import transaction
@@ -105,7 +106,7 @@ def _due(conn, rows, now):
     holds = dict(conn.execute('SELECT code,retry_at FROM source_holds WHERE retry_at>?', (now,)))
     queues = defaultdict(deque)
     for row in sorted(rows, key=lambda item: (
-            checks.get(_identity(item), (0, ''))[0], -len(item['gaps']), _identity(item))):
+            checks.get(_identity(item), (0, ''))[0], len(item['gaps']), _identity(item))):
         checked_at, status = checks.get(_identity(row), (None, ''))
         if row['code'] not in holds and (checked_at is None or checked_at + RETRY.get(status, RECHECK) <= now):
             queues[row['code']].append(row)
@@ -203,6 +204,34 @@ def apply_review(conn, reviewed):
     return inserted, skipped
 
 
+def supports_safe_insert():
+    from .repository import upsert_book
+
+    return 'insert_only' in signature(upsert_book).parameters
+
+
+def run_preview(limit: int):
+    """Read local public catalog metadata and official pages; keep results in memory."""
+    if type(limit) is not int or not 1 <= limit <= BATCH_SIZE:
+        raise ValueError(f'試查系列數須為 1–{BATCH_SIZE}')
+    with closing(sqlite3.connect(':memory:')) as conn:
+        conn.executescript(SCHEMA)
+        result = scan(conn, catalogue_gaps(), limit=limit)
+        print(f"試查 {result['attempted']} 個系列，找到 {result['new_review']} 筆待確認候選。")
+        for code, details in conn.execute('SELECT code,details FROM series_checks ORDER BY rowid'):
+            row = json.loads(details)
+            found = '、'.join(map(str, row['found'])) or '無'
+            missing = row['unresolved']
+            unresolved = '、'.join(map(str, missing[:10])) or '無'
+            if len(missing) > 10:
+                unresolved += f'…共 {len(missing)} 卷'
+            print(f"{code}｜{row['title']}：核對到 {found}；未確認 {unresolved}")
+        if result['source_hold']:
+            print('本輪已停止的來源：' + '、'.join(result['source_hold']))
+        print('試查未寫入書目、未保存斷點、未上傳。')
+        return result
+
+
 def run_interactive():
     print('自動找缺卷：每輪最多 6 個系列。Ctrl+C 可停止；已查的系列和待確認書目會保留。')
     try:
@@ -217,6 +246,9 @@ def run_interactive():
                 return
             for _, book in reviewed:
                 print(f'  {book.publisher_code}｜{book.title} [{book.isbn}]')
+            if not supports_safe_insert():
+                print('此版本缺少安全新增功能，只保留候選，不修改書庫。')
+                return
             if input(f'新增以上 {len(reviewed)} 筆到本機？輸入 YES 確認（不會上傳）：').strip() == 'YES':
                 inserted, skipped = apply_review(conn, reviewed)
                 print(f'本機新增 {inserted} 筆，略過已存在或衝突 {skipped} 筆。')

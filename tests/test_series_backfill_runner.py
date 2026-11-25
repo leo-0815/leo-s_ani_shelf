@@ -135,6 +135,14 @@ class QueueTests(unittest.TestCase):
                 self.assertEqual([book.title for _, book in runner.pending(conn)], ['示範 (2)'])
             self.assertEqual([code for code, _ in calls], ['chingwin', 'kadokawa', 'kadokawa'])
 
+    def test_first_scan_prefers_smaller_gaps_within_a_publisher(self):
+        many = row('kadokawa', '很多缺口', gaps=range(1, 60))
+        few = row('kadokawa', '少量缺口', gaps=[2])
+        lookup = MagicMock(return_value=discovery.Discovery([]))
+        with tempfile.TemporaryDirectory() as folder, runner.open_state(Path(folder) / 'progress.db') as conn:
+            runner.scan(conn, [many, few], limit=1, lookup=lookup, emit=lambda _: None)
+        lookup.assert_called_once_with(few)
+
     def test_ctrl_c_preserves_prior_series_but_not_incomplete_check(self):
         rows = [row('kadokawa'), row('spp')]
         lookup = MagicMock(side_effect=[discovery.Discovery([record()]), KeyboardInterrupt()])
@@ -151,6 +159,46 @@ class QueueTests(unittest.TestCase):
             history_cli.main()
         ask.assert_called_once()
         run.assert_called_once()
+
+    def test_manual_mode_still_has_an_explicit_entry(self):
+        with patch('builtins.input', return_value='m'), patch('app.series_backfill.interactive_series') as manual:
+            history_cli.main()
+        manual.assert_called_once_with()
+
+    def test_preview_dispatches_without_opening_the_menu(self):
+        with patch('builtins.input') as ask, patch.object(runner, 'run_preview') as preview:
+            history_cli.main(('--series-preview', '3'))
+        ask.assert_not_called()
+        preview.assert_called_once_with(3)
+
+    def test_preview_does_not_write_or_persist_progress(self):
+        rows = [row('kadokawa'), row('spp')]
+        scan = runner.scan
+        with patch.object(runner, 'catalogue_gaps', return_value=rows), patch.object(
+            runner, 'scan', side_effect=lambda conn, rows, limit: scan(
+                conn, rows, limit=limit, lookup=lambda _: discovery.Discovery([record()]), emit=lambda _: None
+            )
+        ), patch.object(runner, 'open_state') as disk, patch.object(
+            runner, 'apply_review'
+        ) as apply, patch('builtins.input') as ask, patch('builtins.print'):
+            result = runner.run_preview(1)
+        self.assertEqual(result['attempted'], 1)
+        self.assertEqual(result['new_review'], 1)
+        for forbidden in (disk, apply, ask):
+            forbidden.assert_not_called()
+
+    def test_legacy_repo_does_not_offer_unsafe_review_writes(self):
+        @contextmanager
+        def queue():
+            yield object()
+
+        with patch.object(runner, 'open_state', queue), patch.object(runner, 'catalogue_gaps', return_value=[]), patch.object(
+            runner, 'scan', return_value={'attempted': 1, 'new_review': 1, 'source_hold': []}
+        ), patch.object(runner, 'pending', return_value=[(1, record())]), patch(
+            'app.repository.upsert_book', new=lambda book: self.fail('unsafe write')
+        ), patch('builtins.input') as ask, patch('builtins.print'):
+            runner.run_interactive()
+        ask.assert_not_called()
 
     def test_insert_only_never_updates_existing_or_adds_subscription(self):
         @contextmanager
