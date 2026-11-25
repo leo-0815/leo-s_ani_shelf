@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -60,6 +61,17 @@ class DiscoveryTests(unittest.TestCase):
         detail.assert_called_once_with(product, markup)
         self.assertEqual(len(result.books), 1)
 
+    def test_chingwin_detail_passes_markup_and_verified_media_to_parser(self):
+        url = 'https://www.ching-win.com.tw/product-detail/123'
+        markup = '<nav class="breadcrumb"><a href="/manga">漫畫</a></nav>'
+        book = record('chingwin', url=url)
+        with patch.object(discovery.ChingWinSource, '_parse_catalog_page', autospec=True,
+                          return_value=([book], 0)) as parser:
+            self.assertEqual(discovery._detail(row('chingwin'), url, markup), [book])
+        self.assertEqual(parser.call_args.kwargs, {
+            'page_url': url, 'markup': markup, 'media_type': 'manga', 'cutoff': date.min,
+        })
+
     def test_spp_bootstrap_requires_official_shop_and_structured_search_result(self):
         data = {'SalePageList': [{'Id': 11, 'ShopId': 41817, 'Title': '示範(2)'},
                                  {'Id': 12, 'ShopId': 111, 'Title': '示範(2)'}]}
@@ -107,6 +119,11 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class QueueTests(unittest.TestCase):
+    def test_review_serialization_preserves_confirmation_time(self):
+        date_time = datetime(2026, 11, 26, 10, 15, 9)
+        self.assertEqual(runner._serialize_date(date_time), '2026-11-26T10:15:09')
+        self.assertEqual(runner._serialize_date(date_time.date()), '2026-11-26')
+
     def test_only_one_local_series_runner_can_hold_checkpoint(self):
         with tempfile.TemporaryDirectory() as folder:
             data = Path(folder) / 'progress.db'
