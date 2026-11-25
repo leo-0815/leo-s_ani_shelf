@@ -48,15 +48,20 @@ class SourceParserTests(unittest.TestCase):
     def test_kadokawa_backfill_resumes_with_two_page_overlap(self) -> None:
         source = KadokawaSource()
         progress = {
-            "catalog_v2_upcoming": {"next_page": 2, "completed": True},
-            "catalog_v2_manga": {"next_page": 4, "completed": False},
-            "catalog_v2_novel": {"next_page": 2, "completed": True},
+            "catalog_v3_upcoming": {"next_page": 2, "completed": True},
+            "catalog_v3_manga": {"next_page": 4, "completed": False},
+            "catalog_v3_novel": {"next_page": 2, "completed": True},
         }
         with (
             patch("app.repository.get_backfill_progress", return_value=progress),
-            patch.object(source, "_fetch", return_value="<html></html>") as fetch,
+            patch.object(source, "_fetch", return_value=(
+                '<link rel="canonical" href="/categories/漫畫">'
+                '<div class="ProductList-list"><product-item product-id="id" href="/products/known">'
+                '</product-item></div><ul class="ProductList-paginator"><li class="active">'
+                '<a href="/categories/漫畫?page=2">2</a></li></ul>'
+            )) as fetch,
         ):
-            batches = list(source.collect_batches(known_keys=set(), backfill=True))
+            batches = list(source.collect_batches(known_keys={"known"}, backfill=True))
 
         self.assertEqual(len(batches), 1)
         self.assertIn("page=2", fetch.call_args.args[0])

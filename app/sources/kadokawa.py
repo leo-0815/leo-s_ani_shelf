@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from ..models import BookRecord, detect_edition, extract_volume, infer_series_title
 from .common import fetch_html, parse_page, unique
+from .kadokawa_catalog import verified_listing
 
 
 class _RateLimiter:
@@ -39,7 +40,9 @@ class KadokawaSource:
     workers = 2
     requests_per_second = 2.0
     incremental_catalog_pages = 3
-    checkpoint_version = "catalog_v2"
+    checkpoint_version = "catalog_v3"
+    history_page_size = 24
+    max_history_pages = 500
     latest_cursor: str | None = None
 
     def __init__(self) -> None:
@@ -68,27 +71,19 @@ class KadokawaSource:
         cursor_value: str | None = None,
         backfill: bool = False,
     ) -> Iterator[tuple[list[BookRecord], dict[str, Any] | None]]:
-        from ..repository import get_backfill_progress
+        if backfill:
+            yield from self._verified_history_batches(known_keys)
+            return
 
         seen_keys = set(known_keys or set())
-        progress = get_backfill_progress(self.code) if backfill else {}
         self.latest_cursor = self.category_urls[0][1]
         for segment, base_url in self.category_urls:
-            checkpoint_segment = f"{self.checkpoint_version}_{segment}"
-            saved = progress.get(checkpoint_segment, {})
-            if backfill and saved.get("completed"):
-                print(f"角川大型回填：略過已完成區段 {segment}", flush=True)
-                continue
-            page_number = int(saved.get("next_page", 1)) if backfill else 1
-            if backfill and page_number > 1:
-                # Re-read a small overlap because products can move when the
-                # storefront inserts newer items ahead of the saved page.
-                page_number = max(1, page_number - 2)
+            page_number = 1
             max_incremental_pages = (
                 None if segment == "upcoming" else self.incremental_catalog_pages
             )
             while True:
-                if not backfill and max_incremental_pages and page_number > max_incremental_pages:
+                if max_incremental_pages and page_number > max_incremental_pages:
                     break
                 listing_url = self._page_url(base_url, page_number)
                 listing = parse_page(self._fetch(listing_url))
@@ -101,7 +96,6 @@ class KadokawaSource:
                         continue
                     seen_keys.add(source_key)
                     candidates.append(url)
-                before_errors = len(self.errors)
                 media_hint = segment if segment in {"manga", "novel"} else None
                 records = self._fetch_records(candidates, media_hint=media_hint)
                 has_next = (
@@ -110,26 +104,100 @@ class KadokawaSource:
                 )
                 next_page = page_number + 1
                 completed = not has_next
-                checkpoint = (
-                    {
-                        "segment": checkpoint_segment,
-                        "next_page": next_page,
-                        "completed": completed,
-                        "error_count": len(self.errors) - before_errors,
-                    }
-                    if backfill
-                    else None
-                )
                 print(
                     f"角川 {segment} 第 {page_number} 頁："
                     f"{len(product_urls)} 個商品、{len(candidates)} 個未收錄、"
-                    f"解析 {len(records)} 筆、錯誤 {len(self.errors) - before_errors}",
+                    f"解析 {len(records)} 筆",
                     flush=True,
                 )
-                yield records, checkpoint
+                yield records, None
                 if completed:
                     break
                 page_number = next_page
+
+    def _verified_history_batches(self, known_keys):
+        from ..repository import get_backfill_progress
+        from ..series import series_key
+        from ..series_backfill import VARIANT_TITLE, kadokawa_variants
+
+        progress = get_backfill_progress(self.code)
+        self.latest_cursor = self.category_urls[0][1]
+        known_keys = set(known_keys or ())
+        seen_variants = set()
+        known_isbns = None
+        folded_isbns = set()
+        for segment, base in self.category_urls:
+            name = f"{self.checkpoint_version}_{segment}"
+            saved = progress.get(name, {})
+            if saved.get("completed"):
+                continue
+            # v3 is 24 items/page. It does not inherit old 72-item offsets.
+            page_number = max(1, int(saved.get("next_page", 1)) - 2)
+            fingerprints = set()
+            media_hint = segment if segment in {"manga", "novel"} else None
+            while page_number <= self.max_history_pages:
+                url = self._page_url(base, page_number, limit=self.history_page_size)
+                cards, has_next = verified_listing(url, self._fetch(url), page_number)
+                fingerprint = frozenset(c.url for c in cards)
+                if fingerprint in fingerprints:
+                    raise ValueError(f"角川第 {page_number} 頁：官網回傳重複商品頁")
+                fingerprints.add(fingerprint)
+                before_errors = len(self.errors)
+                ordinary = []
+                variants = []
+                for card in cards:
+                    variant = VARIANT_TITLE.fullmatch(card.title.strip())
+                    if not variant:
+                        key = self._source_key(card.url)
+                        if key not in known_keys:
+                            ordinary.append(card.url)
+                            known_keys.add(key)
+                        continue
+                    variants.append((card, variant))
+                records = [book for book in self._fetch_records(ordinary, media_hint=media_hint, strict=True)
+                           if book.isbn not in folded_isbns]
+                for card, variant in variants:
+                    if card.url in seen_variants:
+                        continue
+                    seen_variants.add(card.url)
+                    row = {"code": self.code, "media_type": "manga" if variant[2] == "漫畫" else "novel",
+                           "series_key": series_key(variant[1], self.code)}
+                    try:
+                        books = kadokawa_variants(row, card.url, self._fetch(card.url))
+                        if not books:
+                            # Official item exists, but its labels/GTINs cannot identify single books.
+                            self.skipped_count += 1
+                            continue
+                        if known_isbns is None:
+                            known_isbns = self._history_isbns()
+                        known_isbns.update(b.isbn for b in records if b.isbn)
+                        for book in books:
+                            if book.source_key in known_keys or book.isbn in known_isbns:
+                                continue
+                            records.append(book)
+                            known_keys.add(book.source_key)
+                            known_isbns.add(book.isbn)
+                            folded_isbns.add(book.isbn)
+                    except Exception as exc:
+                        self.errors.append(f"{card.url}：{exc}")
+                if known_isbns is not None:
+                    known_isbns.update(b.isbn for b in records if b.isbn)
+                errors = len(self.errors) - before_errors
+                print(f"角川 {name} 第 {page_number} 頁：{len(cards)} 張商品卡、{len(records)} 筆、{errors} 個錯誤", flush=True)
+                yield records, {"segment": name, "next_page": page_number + 1,
+                                "completed": not has_next and not errors, "error_count": errors}
+                if errors or not has_next:
+                    break
+                page_number += 1
+            else:
+                raise ValueError(f"角川 {name} 已達分頁安全上限，未標記完成")
+
+    def _history_isbns(self):
+        from ..db import transaction
+        with transaction() as conn, conn.cursor() as cursor:
+            cursor.execute("SELECT b.isbn FROM books b JOIN publishers p ON p.id=b.publisher_id "
+                           "WHERE p.code=%s AND b.isbn IS NOT NULL", (self.code,))
+            return {row["isbn"].replace("-", "").strip() for row in cursor.fetchall()}
 
     def commit_batch(self, checkpoint: dict[str, Any] | None) -> None:
         if not checkpoint:
@@ -147,6 +215,8 @@ class KadokawaSource:
         self,
         urls: list[str],
         media_hint: str | None = None,
+        *,
+        strict: bool = False,
     ) -> list[BookRecord]:
         if not urls:
             return []
@@ -162,8 +232,11 @@ class KadokawaSource:
                         records.append(record)
                     elif record:
                         self.skipped_count += 1
-                except ValueError:
-                    self.skipped_count += 1
+                except ValueError as exc:
+                    if strict:
+                        self.errors.append(f"{futures[future]}：{exc}")
+                    else:
+                        self.skipped_count += 1
                 except Exception as exc:
                     self.errors.append(f"{futures[future]}：{exc}")
         records.sort(key=lambda record: (record.release_date or date.min, record.title))
@@ -274,10 +347,10 @@ class KadokawaSource:
         return numbers
 
     @classmethod
-    def _page_url(cls, base_url: str, page_number: int) -> str:
+    def _page_url(cls, base_url: str, page_number: int, *, limit: int | None = None) -> str:
         parsed = urlparse(base_url)
         query = parse_qs(parsed.query)
-        query.update({"limit": [str(cls.page_size)], "page": [str(page_number)]})
+        query.update({"limit": [str(limit or cls.page_size)], "page": [str(page_number)]})
         return urlunparse(
             (
                 parsed.scheme,

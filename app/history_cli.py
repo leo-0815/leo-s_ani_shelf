@@ -14,13 +14,13 @@ OPTIONS = {
 
 def main() -> None:
     print("\nAniShelf 歷史書目更新")
-    print("[1] 系列定向補查")
+    print("[1] 自動補查系列缺卷")
     print("[2] 地毯式回填（從斷點續跑）")
     print("[Q] 離開")
     choice = input("請輸入選項：").strip().upper()
     if choice == "1":
-        from .series_backfill import interactive_series
-        interactive_series()
+        from .series_backfill_runner import run_interactive
+        run_interactive()
     elif choice == "2":
         run_full_menu()
     elif choice != "Q":
