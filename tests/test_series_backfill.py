@@ -51,15 +51,15 @@ class SeriesBackfillTests(unittest.TestCase):
         self.assertEqual(series.kadokawa_variants(row, "", markup), [])
 
     def test_menu_waits_for_manual_choice(self):
-        with patch("builtins.input", return_value="Q"), patch.object(history_cli, "ensure_schema") as db, \
-                patch.object(history_cli, "run_history_session") as crawl:
+        with patch("builtins.input", return_value="Q"), patch("app.db.ensure_schema") as db, \
+                patch("app.history_runner.run_history_session") as crawl:
             history_cli.main()
         db.assert_not_called()
         crawl.assert_not_called()
 
     def test_full_menu_still_dispatches_existing_mode(self):
-        with patch("builtins.input", side_effect=["2", "2"]), patch.object(history_cli, "ensure_schema"), \
-                patch.object(history_cli, "run_history_session") as crawl:
+        with patch("builtins.input", side_effect=["2", "2"]), patch("app.db.ensure_schema"), \
+                patch("app.history_runner.run_history_session") as crawl:
             history_cli.main()
         crawl.assert_called_once_with("60m")
 
