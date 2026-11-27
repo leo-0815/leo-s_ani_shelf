@@ -146,6 +146,21 @@ def _run_job(
             try:
                 if mode == "backfill":
                     print(f"大型回填：開始 {source.name}…", flush=True)
+                if mode == "backfill" and code == "chingwin":
+                    from .chingwin_local_import import import_saved_history
+
+                    saved = import_saved_history(
+                        lambda records: _write_records(source, records, totals, messages), messages,
+                    )
+                    totals["discovered"] += saved["discovered"]
+                    totals["errors"] += saved["file_errors"]
+                    _update_job_progress(job_id, totals)
+                    messages.append(f"青文離線回填：{saved['batches']} 個日期批次、歸檔 {saved['archived']} 個 HTML。")
+                    print(messages[-1], flush=True)
+                    failed = saved["file_errors"] + saved["write_errors"]
+                    if saved["batches"]:
+                        _mark_source(code, f"有 {failed} 筆青文 HTML 解析或寫入失敗" if failed else None)
+                    continue
                 state = get_sync_state(code)
                 known_keys = known_source_keys(code)
                 source_errors = 0

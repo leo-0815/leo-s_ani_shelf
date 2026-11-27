@@ -7,6 +7,7 @@ from .rating_enrichment import CHECK_TABLE_SQL, candidates, check_book
 from .sources.product_rating import PARSER_VERSIONS
 
 DAILY_LIMIT = 20
+SCHEDULED_RATING_SOURCES = tuple(code for code in PARSER_VERSIONS if code != "chingwin")
 BUDGET_SQL = """
 CREATE TABLE IF NOT EXISTS rating_refresh_budget (
  budget_day DATE NOT NULL PRIMARY KEY,
@@ -37,7 +38,7 @@ def refresh_recent_ratings(*, limit: int = DAILY_LIMIT, minutes: float = 10) -> 
     deadline = time.monotonic() + min(minutes,10) * 60
     while counts["checked"] < limit:
         progressed = False
-        for code in PARSER_VERSIONS:
+        for code in SCHEDULED_RATING_SOURCES:
             if time.monotonic() >= deadline:
                 return counts
             # 90-day recent arrivals / releases, not a full historical crawl.

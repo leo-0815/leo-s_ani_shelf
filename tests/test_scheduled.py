@@ -48,12 +48,17 @@ class ScheduledSourceTests(unittest.TestCase):
             scheduled.main()
         self.assertEqual(order, ["rating","recent","email","discord"])
 
-    def test_cloud_schedule_excludes_deferred_egmanga_source(self) -> None:
+    def test_cloud_schedule_excludes_deferred_egmanga_and_manual_chingwin(self) -> None:
+        from app import rating_refresh, recent_recheck
+
         self.assertEqual(
             SCHEDULED_SOURCES,
-            ("tohan", "chingwin", "kadokawa", "tongli", "spp"),
+            ("tohan", "kadokawa", "tongli", "spp"),
         )
         self.assertNotIn("egmanga", SCHEDULED_SOURCES)
+        self.assertNotIn("chingwin", SCHEDULED_SOURCES)
+        self.assertCountEqual(recent_recheck.SOURCES, SCHEDULED_SOURCES)
+        self.assertCountEqual(rating_refresh.SCHEDULED_RATING_SOURCES, SCHEDULED_SOURCES)
 
 
 if __name__ == "__main__":
