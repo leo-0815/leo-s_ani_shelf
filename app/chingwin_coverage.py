@@ -17,8 +17,6 @@ from .models import detect_edition, extract_volume, infer_series_title, normaliz
 from .publisher_shadow import USER_AGENT, OriginRedirect, Restricted
 
 NCL_DATASET_URL = "https://data.gov.tw/api/v2/rest/dataset/6730"
-NCL_DATASET_PAGE = "https://data.gov.tw/dataset/6730"
-NCL_LICENSE_URL = "https://data.gov.tw/license"
 NCL_HOSTS = {"data.gov.tw", "www.ncl.edu.tw", "isbn.ncl.edu.tw"}
 NCL_PUBLISHER_HEADERS = {"出版機構", "出版機構簡稱"}
 SPECIAL_EDITIONS = {"special", "limited", "first_print", "bonus", "bundle", "deluxe", "collector"}
@@ -186,17 +184,14 @@ def collect_ncl(
     else:
         try:
             meta = json.loads(load_meta(NCL_DATASET_URL)).get("result", {})
-            dists = {}
+            dists = []
             for dist in meta.get("distribution", []):
                 if not dist.get("resourceDownloadUrl"):
                     continue
                 match = re.search(r"(\d{3})年(\d{1,2})月", dist.get("resourceDescription") or "")
                 if match:
-                    year, month = map(int, match.groups())
-                    if 1 <= month <= 12:
-                        ym = f"{year + 1911:04d}-{month:02d}"
-                        dists.setdefault(ym, dist | {"dataset_month": ym})
-            selected = [dists[ym] for ym in sorted(dists)[-ncl_months:]]
+                    dists.append((tuple(map(int, match.groups())), dist))
+            selected = [dist for _, dist in sorted(dists, key=lambda pair: pair[0])[-ncl_months:]]
         except (AttributeError, TypeError, ValueError, OSError) as exc:
             return {"status": "error", "error": str(exc), "distributions": [], "records": []}
     records: list[dict[str, Any]] = []
@@ -205,7 +200,6 @@ def collect_ncl(
     for dist in selected:
         url = dist["resourceDownloadUrl"]
         desc = dist.get("resourceDescription") or url
-        resource = {"description": desc, "url": url, "dataset_month": dist.get("dataset_month")}
         try:
             validate_ncl_url(url)
             csv_text = decode_csv_bytes(load_csv_bytes(url))
@@ -215,49 +209,18 @@ def collect_ncl(
             parsed = parse_ncl_csv(csv_text)
         except (Restricted, ValueError, OSError, csv.Error) as exc:
             failed += 1
-            used.append(resource | {"status": "error", "error": str(exc)})
+            used.append({"description": desc, "status": "error", "error": str(exc)})
             continue
-        records.extend(row | {"dataset_month": resource["dataset_month"], "resource_url": url} for row in parsed)
-        used.append(resource | {"status": "ok", "chingwin_rows": len(parsed)})
+        records.extend(parsed)
+        used.append({"description": desc, "url": url, "chingwin_rows": len(parsed)})
 
     return {
-        "status": "error" if failed and failed == len(used) else "partial" if failed else ("ok" if records else "unverified"),
-        "attribution": "國家圖書館：臺灣出版新書預告書訊",
-        "latest_listed_month": max((x["dataset_month"] for x in used if x["dataset_month"]), default=None),
-        "latest_read_month": max((x["dataset_month"] for x in used if x["dataset_month"] and x["status"] == "ok"), default=None),
+        "status": "partial" if failed and records else ("ok" if records else "unverified"),
+        "attribution": "國家圖書館 (data.gov.tw/dataset/6730)",
         "distributions": used,
         "chingwin_rows_loaded": len(records),
         "records": records,
     }
-
-
-def monthly_candidates(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build a review queue, not a statement of availability or missing catalog books."""
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    unresolved = 0
-    for row in records:
-        if not row["isbn"] or row["media"] not in {"print", "ebook"}:
-            unresolved += 1
-            continue
-        groups.setdefault((row["isbn"], row["media"]), []).append(row)
-    candidates = []
-    conflicts = 0
-    for (isbn, media), rows in sorted(groups.items()):
-        identities = {(row["title_key"], row["volume"], row["edition_type"]) for row in rows}
-        if len(identities) != 1 or not rows[0]["title_key"]:
-            conflicts += 1
-            continue
-        row = max(rows, key=lambda r: (r["dataset_month"] or "", r["resource_url"]))
-        if len({item["planned_ym"] for item in rows if item["dataset_month"] == row["dataset_month"]}) > 1:
-            conflicts += 1
-            continue
-        candidates.append({
-            "isbn": isbn, "media": media, "title": row["title"], "volume": row["volume"],
-            "edition_hint": row["edition_type"], "planned_month": row["planned_ym"],
-            "dataset_month": row["dataset_month"], "resource_url": row["resource_url"],
-        })
-    return {"candidate_count": len(candidates), "unresolved_rows": unresolved,
-            "conflicting_groups": conflicts, "candidates": candidates}
 
 
 def match_baseline_row(base: dict[str, Any], candidates: list[dict[str, Any]]) -> tuple[str, dict[str, Any] | None]:
@@ -374,13 +337,6 @@ def format_markdown_summary(report: dict[str, Any]) -> str:
         "| Source | Announcement month | Edition | Baseline | ID hit | ID details unverified | Title only | Not seen | Ambiguous | ID hit rate |",
         "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    if "monthly_candidates" in report:
-        ncl = report["sources"]["ncl"]
-        lines[3:3] = [
-            f"Latest NCL file listed/read: {ncl.get('latest_listed_month')} / {ncl.get('latest_read_month')}",
-            f"Monthly review candidates: {report['monthly_candidates']['candidate_count']} (not checked against AniShelf)",
-            "Planned month is not an official release date. No catalog writes.",
-        ]
     for src_name, details in report["sources"].items():
         cov = details.get("coverage", {})
         for key, st in cov.items():
@@ -397,7 +353,6 @@ def main() -> None:
     parser.add_argument("--baseline", required=True, help="Path to baseline JSON export.")
     parser.add_argument("--ncl-months", type=int, default=3, help="Number of latest NCL CSVs to load.")
     parser.add_argument("--ncl-csv", action="append", help="Use a published NCL CSV URL; repeat for multiple months.")
-    parser.add_argument("--monthly-candidates", action="store_true", help="Include an NCL-only review queue; no catalog writes.")
     parser.add_argument("--skip-ncl", action="store_true", help="Make the comparison completely offline.")
     parser.add_argument("--retailer-samples", type=Path, help="Local JSON of manually reviewed retailer samples; never fetched.")
     parser.add_argument("--out", required=True, help="Output JSON report path.")
@@ -408,8 +363,6 @@ def main() -> None:
         parser.error("--baseline must contain a nonempty JSON array of book rows")
     if not 1 <= args.ncl_months <= 12 or len(args.ncl_csv or []) > 12:
         parser.error("select between 1 and 12 NCL distributions")
-    if args.monthly_candidates and (args.retailer_samples or args.skip_ncl):
-        parser.error("--monthly-candidates requires NCL data only")
     retailer_samples = read_retailer_samples(args.retailer_samples) if args.retailer_samples else {}
     ncl = ({"status": "not_run", "records": []} if args.skip_ncl
            else collect_ncl(ncl_months=args.ncl_months, csv_urls=args.ncl_csv))
@@ -418,8 +371,7 @@ def main() -> None:
     report = {
         "mode": "read_only",
         "actual_catalog_write": False,
-        "attribution": {"ncl": "國家圖書館：臺灣出版新書預告書訊（政府資料開放授權條款－第1版）",
-                        "dataset": NCL_DATASET_PAGE, "license": NCL_LICENSE_URL},
+        "attribution": {"ncl": "國家圖書館 (data.gov.tw/dataset/6730)"},
         "note": "Not seen means missing from the reviewed sample, not absent from a catalog. Order, coverage, and listing lead/lag are not measured.",
         "baseline": {
             "total": len(baseline),
@@ -432,8 +384,6 @@ def main() -> None:
             } | ncl_eval,
         },
     }
-    if args.monthly_candidates:
-        report["monthly_candidates"] = monthly_candidates(ncl["records"])
     for source, records in retailer_samples.items():
         report["sources"][source] = {
             "status": "manual_evidence_only",
