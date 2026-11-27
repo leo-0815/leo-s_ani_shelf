@@ -63,6 +63,6 @@ class MorePublisherRatingTests(unittest.TestCase):
         self.assertEqual(result["checked"],20)
         self.assertEqual(claim.call_count,20)
         self.assertEqual({call.kwargs["code"] for call in candidates.call_args_list},
-                         {"chingwin","spp","tongli","kadokawa","tohan"})
+                         {"spp","tongli","kadokawa","tohan"})
         self.assertTrue(all(call.kwargs["recent_days"]==90 for call in candidates.call_args_list))
 

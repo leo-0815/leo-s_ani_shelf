@@ -23,7 +23,7 @@ PAGES = 15
 SPP_ITEMS = 200  # Sitemap equivalent; never interpret this as 15 HTML pages.
 DAILY_PRODUCTS = 5  # Per publisher, shared across repeated/manual invocations.
 SOURCE_SECONDS = 240
-SOURCES = ("tohan", "chingwin", "kadokawa", "tongli", "spp")
+SOURCES = ("tohan", "kadokawa", "tongli", "spp")
 
 TOHAN_EXCLUSIONS = frozenset({LOGIN_ERROR, PURE_EXCLUSION})
 # Static, application-owned literals used by both SQL candidate builders.

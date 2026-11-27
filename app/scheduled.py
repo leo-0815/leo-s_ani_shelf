@@ -17,7 +17,8 @@ from .notifications import (
 )
 
 
-SCHEDULED_SOURCES = ("tohan", "chingwin", "kadokawa", "tongli", "spp")
+# Chingwin is updated manually via local catalog sync because its site blocks cloud runners.
+SCHEDULED_SOURCES = ("tohan", "kadokawa", "tongli", "spp")
 
 
 def main() -> None:
