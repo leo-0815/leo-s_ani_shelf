@@ -1,0 +1,25 @@
+name: ChingWin one-shot live browser read
+
+on:
+  push:
+    branches: [codex/live-chingwin-browser-read]
+    paths:
+      - .github/workflows/chingwin-live-browser-read.yml
+      - scripts/chingwin_browser_read.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  live-browser-read:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: google-chrome --version
+      - run: node scripts/chingwin_browser_read.mjs
