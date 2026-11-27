@@ -1,0 +1,38 @@
+name: Publisher daily E2E report
+
+on:
+  push:
+    branches: [codex/publisher-daily-e2e-report]
+
+permissions:
+  contents: read
+
+jobs:
+  simulation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Render a synthetic schedule in Chrome on localhost
+        run: |
+          set -o pipefail
+          python -B -m scripts.chrome_shadow_fixture_test | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Exercise update stages using synthetic data and stubbed storage
+        run: |
+          set -o pipefail
+          python -B -m scripts.publisher_daily_e2e_report simulate | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Run related production-code regression tests offline
+        run: python -B -m unittest tests.test_book_identity tests.test_release_dates tests.test_recent_recheck tests.test_scheduled tests.test_publisher_shadow
+  public-read:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check only the agreed public URLs
+        run: |
+          set -o pipefail
+          python -B -m scripts.publisher_daily_e2e_report public | tee -a "$GITHUB_STEP_SUMMARY"
