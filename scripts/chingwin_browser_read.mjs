@@ -1,7 +1,7 @@
 // One read-only observation with Chrome. Never follow redirects, retry, or
 // execute a challenge. Only the planned top-level documents may load.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -13,7 +13,18 @@ const product = `${root}/product-detail/101018X108`;
 const comic = `${root}/products/chingwin/books/comic/`;
 const args = process.argv.slice(2);
 const categoryMode = args.includes('--category');
+const productOnly = args.includes('--product');
 const headed = args.includes('--headed');
+const sampleFile = productOnly ? process.env.CHINGWIN_TEST_HTML_OUT : undefined;
+if (args.includes('--help')) {
+  console.log('Usage: node scripts/chingwin_browser_read.mjs [Chrome executable] --headed --product');
+  console.log('One navigation; check the existing page every 10 seconds, up to 60 seconds. Stop on errors or verification.');
+  process.exit(0);
+}
+if (categoryMode && productOnly) {
+  console.error('請擇一使用 --category 或 --product');
+  process.exit(2);
+}
 const cli = args.find(arg => !arg.startsWith('--')) || process.env.CHROME_BIN || 'google-chrome';
 const tempRoot = resolve(tmpdir());
 const profile = mkdtempSync(join(tempRoot, 'anishelf-browser-read-'));
@@ -76,14 +87,21 @@ async function intercept(p) {
     active.stop = '驗證頁';
     return block();
   }
+  if (sampleFile && p.request.url === product && Buffer.byteLength(htmlText) <= 5_000_000) {
+    active.sampleHtml = htmlText;
+  }
   await send('Fetch.continueResponse', id);
 }
 
-async function readPage(label, url, expression, mainFrameId) {
+async function readPage(label, url, expression, mainFrameId, {
+  pollEvery = 200, timeout = 9000, ready = value => value != null,
+} = {}) {
   stage = label;
   active = { url, frameId: mainFrameId };
   const page = await send('Page.navigate', { url, frameId: mainFrameId });
-  for (let attempt = 0; attempt < 45; attempt++) {
+  const deadline = performance.now() + timeout;
+  let lastValue = null;
+  for (;;) {
     if (active.stop) throw new Error(active.stop);
     if (page.errorText) throw new Error('Chrome 導覽失敗');
     try {
@@ -92,16 +110,20 @@ async function readPage(label, url, expression, mainFrameId) {
         expression: `location.href === ${JSON.stringify(url)} && document.readyState !== 'loading' ? (${expression})() : null`,
       });
       if (result.exceptionDetails) throw new Error('DOM 讀取失敗');
-      if (result.result?.value != null) {
-        console.log(`${label}：HTTP ${active.status} ${JSON.stringify(result.result.value)}`);
-        return result.result.value;
+      lastValue = result.result?.value ?? null;
+      if (ready(lastValue)) {
+        console.log(`${label}：HTTP ${active.status} ${JSON.stringify(lastValue)}`);
+        return lastValue;
       }
     } catch (error) {
       if (error.message !== 'Runtime.evaluate 失敗') throw error;
     }
-    await delay(200);
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    // Observe this document again; do not refresh it or issue a new request.
+    await delay(Math.min(pollEvery, remaining));
   }
-  throw new Error(active.stop || '未能讀取頁面');
+  throw new Error(active.stop || (lastValue ? '逾時：頁面已開啟，但未能確認必要欄位' : '逾時：未能讀取頁面'));
 }
 
 function exactLink(url) {
@@ -153,7 +175,7 @@ function bookDetails(productId, listTitle) {
   const idAt = visible.search(new RegExp(`產品編號\\s*[:：]\\s*${productId}(?![A-Za-z0-9_-])`));
   const beforeId = idAt >= 0 ? visible.slice(Math.max(0, idAt - 1400), idAt) : '';
   const title = beforeId.split(/\r?\n/).map(s => s.trim()).findLast(s => normalize(s) === normalize(listTitle));
-  const specs = idAt >= 0 ? visible.slice(idAt, idAt + 1200) : '';
+  const specs = idAt >= 0 ? visible.slice(idAt, idAt + 1200).split(/定價|優惠價|內容簡介|商品介紹|推薦商品/)[0] : '';
   const author = specs.match(/作家\s*[:：][\t ]*([^\r\n]+?)(?=[\t ]+(?:繪者|譯者|集數|包裝|級別|開本|出版日期|ISBN)\s*[:：]|[\r\n]|$)/)?.[1].trim();
   const isbn = specs.match(/ISBN\s*[:：]\s*(\d{13})\b/)?.[1];
   const published = specs.match(/出版日期\s*[:：]\s*(\d{4}[-/]\d{2}[-/]\d{2})\b/)?.[1];
@@ -206,7 +228,9 @@ try {
     { urlPattern: '*', resourceType: 'Document', requestStage: 'Response' },
   ] });
   let sample;
-  if (categoryMode) {
+  if (productOnly) {
+    sample = { url: product, id: '101018X108', title: '名偵探柯南(108)' };
+  } else if (categoryMode) {
     const catalog = await readPage('漫畫列表', comic, catalogDetails.toString(), mainFrame);
     if (!catalog.sample) throw new Error('同頁找不到可按商品編號核對的書目連結');
     sample = catalog.sample;
@@ -220,10 +244,18 @@ try {
     sample = { url: product, id: '101018X108', title: '名偵探柯南(108)' };
   }
   const readBook = `() => (${bookDetails.toString()})(${JSON.stringify(sample.id)}, ${JSON.stringify(sample.title)})`;
-  const preview = await readPage('單本商品頁', sample.url, readBook, mainFrame);
+  const preview = await readPage('單本商品頁', sample.url, readBook, mainFrame, productOnly ? {
+    pollEvery: 10000,
+    timeout: 60000,
+    ready: value => Boolean(value?.productId && value.title && value.author),
+  } : undefined);
   stage = '書目預覽';
   if (!preview.productId || !preview.title || !preview.author) throw new Error('未在商品規格讀到書名與「作家」');
   if (sample.isbn && preview.isbn && sample.isbn !== preview.isbn) throw new Error('商品頁 ISBN 和列表不一致');
+  if (sampleFile) {
+    if (!active.sampleHtml) throw new Error('沒有可交付給匯入程式的商品 HTML');
+    writeFileSync(sampleFile, active.sampleHtml, { encoding: 'utf8', flag: 'wx' });
+  }
   console.log(`書目預覽（未入庫）：${JSON.stringify(preview)}`);
 } catch (error) {
   const status = active?.status ? `（HTTP ${active.status}）` : '';
