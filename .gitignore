@@ -8,4 +8,5 @@ __pycache__/
 .vendor/
 logs/
 backups/
+/inputs/chingwin/
 *.log

@@ -57,8 +57,8 @@ class ScheduledSourceTests(unittest.TestCase):
         )
         self.assertNotIn("egmanga", SCHEDULED_SOURCES)
         self.assertNotIn("chingwin", SCHEDULED_SOURCES)
-        self.assertNotIn("chingwin", recent_recheck.SOURCES)
-        self.assertNotIn("chingwin", rating_refresh.SCHEDULED_RATING_SOURCES)
+        self.assertCountEqual(recent_recheck.SOURCES, SCHEDULED_SOURCES)
+        self.assertCountEqual(rating_refresh.SCHEDULED_RATING_SOURCES, SCHEDULED_SOURCES)
 
 
 if __name__ == "__main__":
