@@ -1,0 +1,67 @@
+name: Ching Win saved HTML daily update
+
+on:
+  schedule:
+    - cron: '25 0 * * *' # 08:25 Asia/Taipei
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sample_batch:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.sample_batch && 'anishelf-chingwin-saved-preview' || 'anishelf-scheduled-update' }}
+  cancel-in-progress: false
+
+jobs:
+  import-saved-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Preview today's saved public product pages
+        id: preview
+        env:
+          SAMPLE_BATCH: ${{ inputs.sample_batch == true }}
+        run: |
+          if [ "$SAMPLE_BATCH" = 'true' ]; then
+            day=$(TZ=Asia/Taipei date +%F)
+            inbox="$RUNNER_TEMP/chingwin-test-input"
+            mkdir -p "$inbox/$day/manga"
+            cp tests/fixtures/chingwin_saved_workflow_sample.html "$inbox/$day/manga/TESTCW1.html"
+            python -m app.chingwin_saved_update --inbox "$inbox" --date "$day" --output chingwin-preview.json
+            python -c 'import json; data = json.load(open("chingwin-preview.json", encoding="utf-8")); assert data["status"] == "preview"; [book] = data["books"]; assert (book["source_key"], book["author"], book["isbn"], book["release_date"], book["content_rating"]) == ("TESTCW1", "Fixture Author", "9780000000002", "2026-12-25", "general"); print("Verified the single fixture record without catalog access")'
+          else
+            python -m app.chingwin_saved_update --output chingwin-preview.json
+          fi
+          python -c 'import json; data = json.load(open("chingwin-preview.json", encoding="utf-8")); print("has_books=" + str(bool(data["books"])).lower())' >> "$GITHUB_OUTPUT"
+      - name: Save parsed preview, not input HTML
+        if: steps.preview.outputs.has_books == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chingwin-preview
+          path: chingwin-preview.json
+          retention-days: 7
+      - name: Install repository dependencies for the enabled write
+        if: inputs.sample_batch != true && steps.preview.outputs.has_books == 'true' && vars.ANISHELF_CHINGWIN_SAVED_IMPORT_ENABLED == 'true' && github.ref_name == github.event.repository.default_branch
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Update AniShelf public catalog only
+        if: inputs.sample_batch != true && steps.preview.outputs.has_books == 'true' && vars.ANISHELF_CHINGWIN_SAVED_IMPORT_ENABLED == 'true' && github.ref_name == github.event.repository.default_branch
+        env:
+          ANISHELF_CLOUD_MODE: 'true'
+          ANISHELF_DB_SSL_MODE: verify_identity
+          ANISHELF_DB_HOST: ${{ secrets.ANISHELF_DB_HOST }}
+          ANISHELF_DB_PORT: ${{ secrets.ANISHELF_DB_PORT }}
+          ANISHELF_DB_NAME: ${{ secrets.ANISHELF_DB_NAME }}
+          ANISHELF_DB_USER: ${{ secrets.ANISHELF_DB_USER }}
+          ANISHELF_DB_PASSWORD: ${{ secrets.ANISHELF_DB_PASSWORD }}
+        run: python -m app.chingwin_saved_update --apply

@@ -1,0 +1,20 @@
+name: Ching Win saved HTML workflow smoke test
+
+on:
+  push:
+    branches: [codex/live-chingwin-browser-read]
+    paths:
+      - .github/workflows/chingwin-saved-workflow-smoke.yml
+      - .github/workflows/chingwin-saved-update.yml
+      - app/chingwin_saved_update.py
+      - scripts/chingwin_saved_product.py
+      - tests/fixtures/chingwin_saved_workflow_sample.html
+
+permissions:
+  contents: read
+
+jobs:
+  saved-html:
+    uses: ./.github/workflows/chingwin-saved-update.yml
+    with:
+      sample_batch: true
