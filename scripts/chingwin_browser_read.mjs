@@ -34,6 +34,8 @@ let stage = 'Chrome 啟動';
 let active;
 let launchFailed = false;
 let exited = false;
+let exitCode;
+let chromeStartupLog = '';
 const pending = new Map();
 let serial = 0;
 
@@ -188,12 +190,20 @@ try {
   child = spawn(cli, [...(headed ? (process.platform === 'win32' ? ['--start-minimized'] : []) : ['--headless']),
     '--incognito', '--new-window', '--disable-background-networking', '--no-first-run',
     '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
-  { stdio: 'ignore', windowsHide: true });
+  { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  child.stderr?.on('data', bytes => {
+    if (stage === 'Chrome 啟動') chromeStartupLog = (chromeStartupLog + bytes.toString('utf8')).slice(-3000);
+  });
   child.on('error', () => { launchFailed = true; });
-  child.on('exit', () => { exited = true; });
+  child.on('exit', code => { exited = true; exitCode = code; });
   const portFile = join(profile, 'DevToolsActivePort');
-  for (let i = 0; i < 50 && !existsSync(portFile) && !launchFailed && !exited; i++) await delay(200);
-  if (!existsSync(portFile)) throw new Error('無法啟動本機 Chrome DevTools');
+  for (let i = 0; i < 125 && !existsSync(portFile) && !launchFailed && !exited; i++) await delay(200);
+  if (!existsSync(portFile)) {
+    // No publisher navigation occurs before this check; log only startup errors.
+    const diagnostics = chromeStartupLog.split(/\r?\n/).filter(line => /FATAL|ERROR|DevTools listening/.test(line)).slice(-3);
+    if (diagnostics.length) console.error(diagnostics.join('\n'));
+    throw new Error(`無法啟動本機 Chrome DevTools（${launchFailed ? '無法執行' : exited ? `結束代碼 ${exitCode}` : '25 秒逾時'}）`);
+  }
   const port = Number(readFileSync(portFile, 'utf8').split(/\r?\n/)[0]);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('DevTools 連接埠無效');
   // This Fetch request is local discovery only; Chrome itself navigates all publisher URLs.
@@ -269,6 +279,7 @@ try {
   }
   for (let i = 0; i < 15 && child?.pid && !exited; i++) await delay(100);
   if (child?.pid && !exited) child.kill();
+  child?.stderr?.destroy();
   child?.unref();
   if (dirname(resolve(profile)) === tempRoot && basename(profile).startsWith('anishelf-browser-read-')) {
     try { rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Chrome may still be unwinding */ }
