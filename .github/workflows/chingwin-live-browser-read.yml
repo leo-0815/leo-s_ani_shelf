@@ -1,4 +1,4 @@
-name: ChingWin one-shot live browser read
+name: ChingWin one-shot comic catalog browser read
 
 on:
   push:
@@ -22,4 +22,4 @@ jobs:
         with:
           node-version: '22'
       - run: google-chrome --version
-      - run: node scripts/chingwin_browser_read.mjs
+      - run: xvfb-run --auto-servernum node scripts/chingwin_browser_read.mjs --headed --category

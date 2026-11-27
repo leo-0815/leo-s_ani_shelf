@@ -1,5 +1,5 @@
 // One read-only observation with Chrome. Never follow redirects, retry, or
-// execute a challenge. Only the three specified top-level documents may load.
+// execute a challenge. Only the planned top-level documents may load.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,11 @@ const root = 'https://www.ching-win.com.tw';
 const announcement = `${root}/about-news/`;
 const schedule = `${root}/about-news-detail/212`;
 const product = `${root}/product-detail/101018X108`;
-const cli = process.argv[2] || process.env.CHROME_BIN || 'google-chrome';
+const comic = `${root}/products/chingwin/books/comic/`;
+const args = process.argv.slice(2);
+const categoryMode = args.includes('--category');
+const headed = args.includes('--headed');
+const cli = args.find(arg => !arg.startsWith('--')) || process.env.CHROME_BIN || 'google-chrome';
 const tempRoot = resolve(tmpdir());
 const profile = mkdtempSync(join(tempRoot, 'anishelf-browser-read-'));
 let child;
@@ -104,23 +108,63 @@ function exactLink(url) {
   return `() => { const anchor = [...document.querySelectorAll('a[href]')].find(a => a.href === ${JSON.stringify(url)} && a.innerText.trim()); return {found: !!anchor, label: anchor?.innerText.trim() || null}; }`;
 }
 
-function bookDetails() {
+function catalogDetails() {
+  const normalize = (value) => String(value || '').replace(/\s+/g, '').replace(/[（）]/g, c => c === '（' ? '(' : ')')
+    .replace(/^\(?預購\)?/, '');
+  const objects = [...document.querySelectorAll('script[type="application/ld+json"]')].flatMap(node => {
+    try {
+      const data = JSON.parse(node.textContent);
+      return Array.isArray(data) ? data : (data?.['@graph'] || [data]);
+    } catch { return []; }
+  });
+  const products = new Map();
+  const collidedNames = new Set();
+  const books = new Map();
+  for (const data of objects) {
+    if (!data?.name) continue;
+    const name = normalize(data.name);
+    if (data['@type'] === 'Book') {
+      const isbn = String(data.isbn || '').replace(/[\s-]/g, '');
+      if (/^(?:97[89]\d{10}|\d{9}[\dX])$/.test(isbn)) books.set(name, isbn);
+    } else if (data['@type'] === 'Product' && /^[A-Za-z0-9_-]{1,40}$/.test(data.sku || '')) {
+      if (products.has(name) && products.get(name).id !== data.sku) collidedNames.add(name);
+      products.set(name, { id: data.sku, title: data.name });
+    }
+  }
+  const links = new Map();
+  for (const a of document.querySelectorAll('a[href]')) {
+    const url = new URL(a.href);
+    const match = /^\/product-detail\/([A-Za-z0-9_-]{1,40})\/?$/.exec(url.pathname);
+    if (match && url.origin === location.origin && !url.search && !url.hash) {
+      links.set(match[1], url.href);
+    }
+  }
+  const eligible = [...products].filter(([name, row]) => !collidedNames.has(name) && links.has(row.id))
+    .map(([name, row]) => ({ ...row, url: links.get(row.id), isbn: books.get(name) || null }));
+  // If none lack a listing ISBN, use a single row as an unregistered-book sample.
+  const sample = eligible.find(row => !row.isbn) || eligible[0] || null;
+  return { title: document.title, matchedProducts: eligible.length,
+    withIsbn: eligible.filter(row => row.isbn).length, sample };
+}
+
+function bookDetails(productId, listTitle) {
   const visible = document.body.innerText;
-  const title = [...document.querySelectorAll('h1,h2,h3,h4,.product-title')]
-    .map(e => e.innerText.trim()).find(s => /名偵探柯南\s*[（(]\s*108\s*[）)]/.test(s))
-    || visible.match(/^.*名偵探柯南\s*[（(]\s*108\s*[）)].*$/m)?.[0]?.trim();
-  const idAt = visible.search(/產品編號\s*[:：]\s*101018X108\b/);
+  const normalize = (value) => value.replace(/\s+/g, '').replace(/[（）]/g, c => c === '（' ? '(' : ')').replace(/^\(?預購\)?/, '');
+  const idAt = visible.search(new RegExp(`產品編號\\s*[:：]\\s*${productId}(?![A-Za-z0-9_-])`));
+  const beforeId = idAt >= 0 ? visible.slice(Math.max(0, idAt - 1400), idAt) : '';
+  const title = beforeId.split(/\r?\n/).map(s => s.trim()).findLast(s => normalize(s) === normalize(listTitle));
   const specs = idAt >= 0 ? visible.slice(idAt, idAt + 1200) : '';
   const author = specs.match(/作家\s*[:：][\t ]*([^\r\n]+?)(?=[\t ]+(?:繪者|譯者|集數|包裝|級別|開本|出版日期|ISBN)\s*[:：]|[\r\n]|$)/)?.[1].trim();
   const isbn = specs.match(/ISBN\s*[:：]\s*(\d{13})\b/)?.[1];
   const published = specs.match(/出版日期\s*[:：]\s*(\d{4}[-/]\d{2}[-/]\d{2})\b/)?.[1];
-  return { productId: idAt >= 0 ? '101018X108' : null, title: title || null, author: author || null,
+  return { productId: idAt >= 0 ? productId : null, title: title || null, author: author || null,
     isbn: isbn || null, published: published || null };
 }
 
 try {
   if (typeof WebSocket !== 'function') throw new Error('需要 Node.js 22 以上');
-  child = spawn(cli, ['--headless', '--incognito', '--disable-background-networking', '--no-first-run',
+  child = spawn(cli, [...(headed ? (process.platform === 'win32' ? ['--start-minimized'] : []) : ['--headless']),
+    '--incognito', '--new-window', '--disable-background-networking', '--no-first-run',
     '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
   { stdio: 'ignore', windowsHide: true });
   child.on('error', () => { launchFailed = true; });
@@ -161,11 +205,25 @@ try {
     { urlPattern: '*', requestStage: 'Request' },
     { urlPattern: '*', resourceType: 'Document', requestStage: 'Response' },
   ] });
-  if (!(await readPage('公告', announcement, exactLink(schedule), mainFrame)).found) throw new Error('找不到指定出書表連結');
-  if (!(await readPage('出書表', schedule, exactLink(product), mainFrame)).found) throw new Error('找不到指定商品連結');
-  const preview = await readPage('單本商品頁', product, bookDetails.toString(), mainFrame);
+  let sample;
+  if (categoryMode) {
+    const catalog = await readPage('漫畫列表', comic, catalogDetails.toString(), mainFrame);
+    if (!catalog.sample) throw new Error('同頁找不到可按商品編號核對的書目連結');
+    sample = catalog.sample;
+    const url = new URL(sample.url);
+    if (url.origin !== root || !/^[A-Za-z0-9_-]{1,40}$/.test(sample.id)
+      || ![ `/product-detail/${sample.id}`, `/product-detail/${sample.id}/` ].includes(url.pathname)
+      || url.search || url.hash) throw new Error('商品連結和列表商品編號不符');
+  } else {
+    if (!(await readPage('公告', announcement, exactLink(schedule), mainFrame)).found) throw new Error('找不到指定出書表連結');
+    if (!(await readPage('出書表', schedule, exactLink(product), mainFrame)).found) throw new Error('找不到指定商品連結');
+    sample = { url: product, id: '101018X108', title: '名偵探柯南(108)' };
+  }
+  const readBook = `() => (${bookDetails.toString()})(${JSON.stringify(sample.id)}, ${JSON.stringify(sample.title)})`;
+  const preview = await readPage('單本商品頁', sample.url, readBook, mainFrame);
   stage = '書目預覽';
   if (!preview.productId || !preview.title || !preview.author) throw new Error('未在商品規格讀到書名與「作家」');
+  if (sample.isbn && preview.isbn && sample.isbn !== preview.isbn) throw new Error('商品頁 ISBN 和列表不一致');
   console.log(`書目預覽（未入庫）：${JSON.stringify(preview)}`);
 } catch (error) {
   const status = active?.status ? `（HTTP ${active.status}）` : '';
