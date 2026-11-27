@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 import gzip
 import random
 import threading
@@ -14,11 +15,20 @@ from typing import Iterable
 
 
 USER_AGENT = "AniShelf/0.1 (personal release catalog; respectful low-rate fetcher)"
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 MAX_RESPONSE_BYTES = 6 * 1024 * 1024
 RETRYABLE_HTTP_STATUS = frozenset(
     {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
 )
 RETRY_DELAYS = (2.0, 5.0, 10.0, 20.0)
+CHALLENGE_RE = re.compile(
+    r"<title\b[^>]*>\s*(?:just a moment|attention required|access denied|請稍候)"
+    r"|/cdn-cgi/challenge-platform|\bcf-chl-\b",
+    re.I,
+)
 
 
 def _normalized_url(url: str) -> str:
@@ -32,6 +42,90 @@ def _normalized_url(url: str) -> str:
             "",
         )
     )
+
+
+def _is_cf_challenge(status: int | None, headers: dict | None, body: bytes) -> bool:
+    if headers:
+        for k, v in headers.items():
+            if k.lower() == "cf-mitigated" and "challenge" in str(v).lower():
+                return True
+    if status in {403, 503} and body:
+        if CHALLENGE_RE.search(body[:4096].decode("utf-8", errors="ignore")):
+            return True
+    return False
+
+
+def _fetch_via_browser_fallback(url: str, timeout: int) -> tuple[bytes, str] | None:
+    """遭遇 Cloudflare 阻擋時，先模擬瀏覽器 TLS 指紋，再切換為隱藏自動化瀏覽器；無法繞過則回傳 None"""
+    # 1. 嘗試 curl_cffi 模擬 Chrome 瀏覽器 TLS 指紋
+    try:
+        from curl_cffi import requests as cffi_requests  # type: ignore
+
+        resp = cffi_requests.get(
+            url,
+            impersonate="chrome",
+            headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+            timeout=timeout,
+        )
+        raw = resp.content
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise ValueError("來源頁面解壓後超過 6 MB 安全上限")
+        if resp.status_code == 200 and not _is_cf_challenge(resp.status_code, dict(resp.headers), raw):
+            return raw, resp.encoding or "utf-8"
+    except ValueError:
+        raise
+    except Exception:
+        pass
+
+    # 2. 若仍被 JS Challenge 阻擋，切換為擬真瀏覽器（搭配 xvfb 虛擬螢幕與防偵測腳本）
+    try:
+        import os
+        from playwright.sync_api import sync_playwright  # type: ignore
+
+        use_headed = bool(os.environ.get("DISPLAY"))
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=not use_headed,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--window-size=1280,800",
+                ],
+            )
+            try:
+                context = browser.new_context(
+                    user_agent=BROWSER_UA,
+                    locale="zh-TW",
+                    timezone_id="Asia/Taipei",
+                    viewport={"width": 1280, "height": 800},
+                )
+                context.add_init_script(
+                    """
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    window.chrome = { runtime: {} };
+                    Object.defineProperty(navigator, 'languages', { get: () => ['zh-TW', 'zh', 'en-US', 'en'] });
+                    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                    """
+                )
+                page = context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    html_text = page.content()
+                    if not CHALLENGE_RE.search(html_text):
+                        raw = html_text.encode("utf-8")
+                        if len(raw) > MAX_RESPONSE_BYTES:
+                            raise ValueError("來源頁面解壓後超過 6 MB 安全上限")
+                        return raw, "utf-8"
+                    page.wait_for_timeout(1500)
+            finally:
+                browser.close()
+    except ValueError:
+        raise
+    except Exception:
+        pass
+    return None
 
 
 def _fetch_payload(
@@ -59,9 +153,19 @@ def _fetch_payload(
                     payload = gzip.decompress(payload)
                 if len(payload) > MAX_RESPONSE_BYTES:
                     raise ValueError("來源頁面解壓後超過 6 MB 安全上限")
+                if _is_cf_challenge(response.status, dict(response.headers), payload):
+                    fallback = _fetch_via_browser_fallback(url, timeout)
+                    if fallback is not None:
+                        return fallback
+                    raise RuntimeError(f"HTTP {response.status} (Cloudflare challenge): {url}")
                 return payload, response.headers.get_content_charset() or "utf-8"
         except urllib.error.HTTPError as exc:
             last_error = exc
+            err_body = exc.read(4096) if exc.fp else b""
+            if _is_cf_challenge(exc.code, dict(exc.headers), err_body) or exc.code == 403:
+                fallback = _fetch_via_browser_fallback(url, timeout)
+                if fallback is not None:
+                    return fallback
             if exc.code not in RETRYABLE_HTTP_STATUS or attempt + 1 >= attempts:
                 raise RuntimeError(f"HTTP {exc.code}: {url}") from exc
             retry_after = exc.headers.get("Retry-After")
@@ -77,6 +181,71 @@ def _fetch_payload(
             delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
         time.sleep(delay + random.uniform(0.1, 0.4))
     raise RuntimeError(f"無法連線到 {url}: {last_error}")
+
+# USER_AGENT = "AniShelf/0.1 (personal release catalog; respectful low-rate fetcher)"
+# MAX_RESPONSE_BYTES = 6 * 1024 * 1024
+# RETRYABLE_HTTP_STATUS = frozenset(
+#     {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+# )
+# RETRY_DELAYS = (2.0, 5.0, 10.0, 20.0)
+
+
+# def _normalized_url(url: str) -> str:
+#     parsed = urllib.parse.urlsplit(url)
+#     return urllib.parse.urlunsplit(
+#         (
+#             parsed.scheme,
+#             parsed.netloc.encode("idna").decode("ascii"),
+#             urllib.parse.quote(urllib.parse.unquote(parsed.path), safe="/%:@"),
+#             urllib.parse.quote(urllib.parse.unquote(parsed.query), safe="=&%:@/?+"),
+#             "",
+#         )
+#     )
+
+
+# def _fetch_payload(
+#     url: str,
+#     timeout: int = 20,
+#     attempts: int = 3,
+#     accept: str = "*/*",
+# ) -> tuple[bytes, str]:
+#     url = _normalized_url(url)
+#     request = urllib.request.Request(
+#         url,
+#         headers={
+#             "User-Agent": USER_AGENT,
+#             "Accept": accept,
+#             "Accept-Language": "zh-TW,zh;q=0.9",
+#             "Accept-Encoding": "gzip",
+#         },
+#     )
+#     last_error: Exception | None = None
+#     for attempt in range(max(1, attempts)):
+#         try:
+#             with urllib.request.urlopen(request, timeout=timeout) as response:
+#                 payload = response.read(MAX_RESPONSE_BYTES + 1)
+#                 if response.headers.get("Content-Encoding", "").lower() == "gzip":
+#                     payload = gzip.decompress(payload)
+#                 if len(payload) > MAX_RESPONSE_BYTES:
+#                     raise ValueError("來源頁面解壓後超過 6 MB 安全上限")
+#                 return payload, response.headers.get_content_charset() or "utf-8"
+#         except urllib.error.HTTPError as exc:
+#             last_error = exc
+#             if exc.code not in RETRYABLE_HTTP_STATUS or attempt + 1 >= attempts:
+#                 raise RuntimeError(f"HTTP {exc.code}: {url}") from exc
+#             retry_after = exc.headers.get("Retry-After")
+#             delay = (
+#                 float(retry_after)
+#                 if retry_after and retry_after.isdigit()
+#                 else RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+#             )
+#         except urllib.error.URLError as exc:
+#             last_error = exc
+#             if attempt + 1 >= attempts:
+#                 raise RuntimeError(f"無法連線到 {url}: {exc.reason}") from exc
+#             delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
+#         time.sleep(delay + random.uniform(0.1, 0.4))
+#     raise RuntimeError(f"無法連線到 {url}: {last_error}")
 
 
 def fetch_bytes(

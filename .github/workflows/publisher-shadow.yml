@@ -25,6 +25,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt 
+      - run: python -m playwright install chromium --with-deps
       - name: Check public pages without access to production settings
         env:
           RETAILER_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.approved_retailer_probe }}
@@ -34,5 +37,5 @@ jobs:
           args=()
           if [[ "$RETAILER_PROBE" == "true" ]]; then args+=(--retailers); fi
           printf '## Bounded public source samples\n\n```json\n' >> "$GITHUB_STEP_SUMMARY"
-          python -m app.publisher_shadow "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a python -m app.publisher_shadow "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
           printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"

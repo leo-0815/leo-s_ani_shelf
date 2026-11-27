@@ -83,6 +83,9 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Install Chromium for Cloudflare fallback
+        if: ${{ github.event_name == 'schedule' || (inputs.test_email_only != true && inputs.test_database_only != true && inputs.migrate_database_only != true && inputs.test_email_user_id == '') }}
+        run: python -m playwright install chromium --with-deps
       - name: Validate database secrets
         if: ${{ github.event_name == 'schedule' || inputs.test_email_only != true }}
         shell: bash
@@ -95,7 +98,7 @@ jobs:
           done
       - name: Update publishers and send notifications
         if: ${{ github.event_name == 'schedule' || ((inputs.test_publisher_only == '' || inputs.test_publisher_only == 'none') && inputs.test_recent_recheck_only != true && inputs.test_ratings_only != true && inputs.test_email_only != true && inputs.test_database_only != true && inputs.migrate_database_only != true && inputs.test_email_user_id == '') }}
-        run: python -m app.scheduled
+        run: xvfb-run -a python -m app.scheduled
       - name: Verify one repaired publisher without notifications
         if: ${{ github.event_name == 'workflow_dispatch' && (inputs.test_publisher_only == 'tohan' || inputs.test_publisher_only == 'spp') }}
         env:

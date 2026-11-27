@@ -64,18 +64,126 @@ class OriginRedirect(HTTPRedirectHandler):
             raise Restricted("login_required")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
+def _fetch_browser_fallback(url: str, expected_netloc: str) -> str:
+    browser_ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    )
+    challenge_re = re.compile(
+        r"<title\b[^>]*>\s*(?:just a moment|attention required|access denied|請稍候)"
+        r"|/cdn-cgi/challenge-platform|\bcf-chl-\b",
+        re.I,
+    )
+
+    def _validate_target(final_url: str, body_text: str) -> str:
+        after = urlsplit(final_url)
+        if after.scheme != "https" or after.netloc != expected_netloc:
+            raise Restricted("redirect_other_origin")
+        if re.search(r"login|member\.php", after.path, re.I):
+            raise Restricted("login_required")
+        if len(body_text.encode("utf-8")) > LIMIT:
+            raise ValueError("response_limit")
+        if challenge_re.search(body_text):
+            raise Restricted("challenge")
+        return body_text
+
+    # 1. 先模擬瀏覽器 TLS 指紋
+    try:
+        from curl_cffi import requests as cffi_requests  # type: ignore
+
+        resp = cffi_requests.get(
+            url,
+            impersonate="chrome",
+            headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+            timeout=15,
+            max_redirects=2,
+        )
+        if resp.status_code == 200 and resp.headers.get("cf-mitigated", "").lower() != "challenge":
+            return _validate_target(str(resp.url), resp.text)
+    except Restricted:
+        raise
+    except Exception:
+        pass
+
+    # 2. 遇到阻擋後切換成擬真瀏覽器（搭配 xvfb 虛擬螢幕與防偵測腳本）
+    try:
+        import os
+        from playwright.sync_api import sync_playwright  # type: ignore
+
+        use_headed = bool(os.environ.get("DISPLAY"))
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=not use_headed,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--window-size=1280,800",
+                ],
+            )
+            try:
+                context = browser.new_context(
+                    user_agent=browser_ua,
+                    locale="zh-TW",
+                    timezone_id="Asia/Taipei",
+                    viewport={"width": 1280, "height": 800},
+                )
+                context.add_init_script(
+                    """
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    window.chrome = { runtime: {} };
+                    Object.defineProperty(navigator, 'languages', { get: () => ['zh-TW', 'zh', 'en-US', 'en'] });
+                    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                    """
+                )
+                page = context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                deadline = time.monotonic() + 20.0
+                while time.monotonic() < deadline:
+                    html_text = page.content()
+                    if not challenge_re.search(html_text):
+                        return _validate_target(page.url, html_text)
+                    page.wait_for_timeout(1500)
+                raise Restricted("challenge")
+            finally:
+                browser.close()
+    except Restricted:
+        raise
+    except Exception as exc:
+        raise Restricted("challenge") from exc
+
+
 
 def fetch(url):
-    # The caller supplies only hardcoded public URLs. One GET, no retry or login.
     from urllib.parse import quote
-    request = Request(quote(url, safe=":/?=&%.-_"), headers={"User-Agent": USER_AGENT})
-    with build_opener(OriginRedirect()).open(request, timeout=10) as response:
-        if response.headers.get("cf-mitigated", "").lower() == "challenge":
-            raise Restricted("challenge")
-        payload = response.read(LIMIT + 1)
-        if len(payload) > LIMIT:
-            raise ValueError("response_limit")
-        return payload.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
+
+    encoded_url = quote(url, safe=":/?=&%.-_")
+    expected_netloc = urlsplit(encoded_url).netloc
+    request = Request(encoded_url, headers={"User-Agent": USER_AGENT})
+    try:
+        with build_opener(OriginRedirect()).open(request, timeout=10) as response:
+            if response.headers.get("cf-mitigated", "").lower() == "challenge":
+                return _fetch_browser_fallback(encoded_url, expected_netloc)
+            payload = response.read(LIMIT + 1)
+            if len(payload) > LIMIT:
+                raise ValueError("response_limit")
+            return payload.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
+    except HTTPError as error:
+        if error.headers.get("cf-mitigated", "").lower() == "challenge" or error.code == 403:
+            return _fetch_browser_fallback(encoded_url, expected_netloc)
+        raise
+
+# def fetch(url):
+#     # The caller supplies only hardcoded public URLs. One GET, no retry or login.
+#     from urllib.parse import quote
+#     request = Request(quote(url, safe=":/?=&%.-_"), headers={"User-Agent": USER_AGENT})
+#     with build_opener(OriginRedirect()).open(request, timeout=10) as response:
+#         if response.headers.get("cf-mitigated", "").lower() == "challenge":
+#             raise Restricted("challenge")
+#         payload = response.read(LIMIT + 1)
+#         if len(payload) > LIMIT:
+#             raise ValueError("response_limit")
+#         return payload.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
 
 
 class VisibleText(HTMLParser):
