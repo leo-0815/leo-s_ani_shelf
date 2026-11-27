@@ -1,0 +1,22 @@
+name: Chrome shadow fixture test
+
+on:
+  push:
+    branches: [codex/chrome-shadow-fixture-test]
+
+permissions:
+  contents: read
+
+jobs:
+  localhost-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test browser rendering and blocked-source handling
+        run: |
+          set -o pipefail
+          google-chrome --version
+          python -B -m scripts.chrome_shadow_fixture_test | tee -a "$GITHUB_STEP_SUMMARY"
