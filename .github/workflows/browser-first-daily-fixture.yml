@@ -1,0 +1,21 @@
+name: Browser-first daily fixture
+
+on:
+  push:
+    branches: [codex/browser-first-daily-fixture]
+
+permissions:
+  contents: read
+
+jobs:
+  browser-first:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exercise browser-first flow on loopback only
+        run: |
+          set -o pipefail
+          python -B -m scripts.browser_first_daily_fixture | tee -a "$GITHUB_STEP_SUMMARY"
