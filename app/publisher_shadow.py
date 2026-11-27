@@ -105,30 +105,53 @@ def _fetch_browser_fallback(url: str, expected_netloc: str) -> str:
     except Exception:
         pass
 
-    # 2. 遇到阻擋後切換成隱藏自動化瀏覽器
+    # 2. 遇到阻擋後切換成擬真瀏覽器（搭配 xvfb 虛擬螢幕與防偵測腳本）
     try:
+        import os
         from playwright.sync_api import sync_playwright  # type: ignore
 
+        use_headed = bool(os.environ.get("DISPLAY"))
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+                headless=not use_headed,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--window-size=1280,800",
+                ],
             )
             try:
-                context = browser.new_context(user_agent=browser_ua, locale="zh-TW")
+                context = browser.new_context(
+                    user_agent=browser_ua,
+                    locale="zh-TW",
+                    timezone_id="Asia/Taipei",
+                    viewport={"width": 1280, "height": 800},
+                )
+                context.add_init_script(
+                    """
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    window.chrome = { runtime: {} };
+                    Object.defineProperty(navigator, 'languages', { get: () => ['zh-TW', 'zh', 'en-US', 'en'] });
+                    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                    """
+                )
                 page = context.new_page()
-                page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                deadline = time.monotonic() + 15.0
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                deadline = time.monotonic() + 20.0
                 while time.monotonic() < deadline:
                     html_text = page.content()
                     if not challenge_re.search(html_text):
                         return _validate_target(page.url, html_text)
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(1500)
                 raise Restricted("challenge")
             finally:
                 browser.close()
-    except ImportError as exc:
+    except Restricted:
+        raise
+    except Exception as exc:
         raise Restricted("challenge") from exc
+
 
 
 def fetch(url):

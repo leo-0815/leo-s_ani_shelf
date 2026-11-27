@@ -37,5 +37,5 @@ jobs:
           args=()
           if [[ "$RETAILER_PROBE" == "true" ]]; then args+=(--retailers); fi
           printf '## Bounded public source samples\n\n```json\n' >> "$GITHUB_STEP_SUMMARY"
-          python -m app.publisher_shadow "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a python -m app.publisher_shadow "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
           printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"

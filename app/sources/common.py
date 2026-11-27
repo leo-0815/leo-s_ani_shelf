@@ -77,17 +77,37 @@ def _fetch_via_browser_fallback(url: str, timeout: int) -> tuple[bytes, str] | N
     except Exception:
         pass
 
-    # 2. 若仍被 JS Challenge 阻擋，切換為隱藏無頭瀏覽器（Playwright）執行渲染
+    # 2. 若仍被 JS Challenge 阻擋，切換為擬真瀏覽器（搭配 xvfb 虛擬螢幕與防偵測腳本）
     try:
+        import os
         from playwright.sync_api import sync_playwright  # type: ignore
 
+        use_headed = bool(os.environ.get("DISPLAY"))
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+                headless=not use_headed,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--window-size=1280,800",
+                ],
             )
             try:
-                context = browser.new_context(user_agent=BROWSER_UA, locale="zh-TW")
+                context = browser.new_context(
+                    user_agent=BROWSER_UA,
+                    locale="zh-TW",
+                    timezone_id="Asia/Taipei",
+                    viewport={"width": 1280, "height": 800},
+                )
+                context.add_init_script(
+                    """
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    window.chrome = { runtime: {} };
+                    Object.defineProperty(navigator, 'languages', { get: () => ['zh-TW', 'zh', 'en-US', 'en'] });
+                    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                    """
+                )
                 page = context.new_page()
                 page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
                 deadline = time.monotonic() + timeout
@@ -98,14 +118,13 @@ def _fetch_via_browser_fallback(url: str, timeout: int) -> tuple[bytes, str] | N
                         if len(raw) > MAX_RESPONSE_BYTES:
                             raise ValueError("來源頁面解壓後超過 6 MB 安全上限")
                         return raw, "utf-8"
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(1500)
             finally:
                 browser.close()
     except ValueError:
         raise
     except Exception:
         pass
-
     return None
 
 
